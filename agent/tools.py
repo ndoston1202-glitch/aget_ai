@@ -59,6 +59,16 @@ def system_context() -> str:
             f"{memory.as_prompt()}")
 
 
+def _open_link(url: str, human) -> str:
+    """Havolani ochadi: buyruq telefondan kelgan bo'lsa - telefonda, aks holda kompyuterda."""
+    if hasattr(human, "open_on_device"):
+        human.open_on_device(url)
+        return "Telefonda ochildi"
+    import webbrowser
+    webbrowser.open(url)
+    return "Kompyuterda ochildi"
+
+
 def _resolve(path: str) -> Path:
     p = Path(path).expanduser()
     return p if p.is_absolute() else (config.WORKSPACE_DIR / p)
@@ -289,20 +299,19 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
                 title = re.search(r'"title":\{"runs":\[\{"text":"([^"]{1,150})"', html)
                 if vid:
                     url = f"https://www.youtube.com/watch?v={vid.group(1)}"
-                    webbrowser.open(url)
-                    return f"Ochildi: {title.group(1) if title else args['query']} ({url})", False
+                    where = _open_link(url, human)
+                    return f"{where}: {title.group(1) if title else args['query']} ({url})", False
             except Exception:
                 pass
-            webbrowser.open(url)
-            return f"YouTube qidiruv natijalari ochildi: {url}", False
+            where = _open_link(url, human)
+            return f"{where} (YouTube qidiruv natijalari): {url}", False
 
         if name == "open_url":
             import webbrowser
             url = args["url"].strip()
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
-            webbrowser.open(url)
-            return f"Brauzerda ochildi: {url}", False
+            return f"{_open_link(url, human)}: {url}", False
 
         if name == "media_control":
             if platform.system() != "Windows":

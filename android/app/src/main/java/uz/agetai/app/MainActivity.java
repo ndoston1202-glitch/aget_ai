@@ -75,6 +75,16 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void openUrl(String url) {
+            // Havolani telefonda ochadi: YouTube havolasi YouTube ilovasida ochiladi
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                } catch (Exception ignored) { }
+            });
+        }
+
+        @JavascriptInterface
         public void stopVoice() {
             boolean ok = true;
             try {

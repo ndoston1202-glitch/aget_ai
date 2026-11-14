@@ -22,6 +22,7 @@ INDEX_HTML = r"""<!doctype html>
   header h1 { font-size:17px; margin:0; flex:1; }
   #dot { width:10px; height:10px; border-radius:50%; background:#aaa; }
   #dot.on { background:#22c55e; } #dot.off { background:#ef4444; }
+  #ttsBtn { font-size:18px; padding:4px 8px; }
   header button { background:none; border:1px solid var(--border); color:var(--text);
                   border-radius:8px; padding:6px 10px; font-size:14px; }
   #log { flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:10px; }
@@ -54,7 +55,7 @@ INDEX_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<header><span id="dot"></span><h1>aget_ai</h1><button id="newBtn">Yangi suhbat</button></header>
+<header><span id="dot"></span><h1>AI Agent</h1><button id="ttsBtn" title="Ovozli javob">🔊</button><button id="newBtn">Yangi suhbat</button></header>
 <div id="login">
   <b>Kompyuterdagi "Telefon" oynasidagi kodni kiriting:</b>
   <input id="code" placeholder="Masalan: 9F3A1C0B" autocapitalize="characters">
@@ -68,7 +69,22 @@ INDEX_HTML = r"""<!doctype html>
 const qs = new URLSearchParams(location.search);
 let token = qs.get("token") || "";
 try { if (token) localStorage.setItem("token", token); else token = localStorage.getItem("token") || ""; } catch (e) {}
-let after = 0, busy = false, online = false;
+let after = 0, busy = false, online = false, firstPoll = true;
+let ttsOn = true;
+try { ttsOn = localStorage.getItem("tts") !== "off"; } catch (e) {}
+let player = null;
+function speak(text) {
+  if (!ttsOn || !text) return;
+  fetch("/api/tts", {method: "POST", headers: {"X-Token": token, "Content-Type": "application/json"},
+                     body: JSON.stringify({text})})
+    .then(r => r.ok ? r.blob() : null)
+    .then(b => { if (!b) return; if (player) player.pause(); player = new Audio(URL.createObjectURL(b)); player.play().catch(() => {}); })
+    .catch(() => {});
+}
+function openLink(url) {
+  if (window.AgetAndroid && window.AgetAndroid.openUrl) window.AgetAndroid.openUrl(url);
+  else window.open(url, "_blank");
+}
 const $ = id => document.getElementById(id);
 const log = $("log");
 
@@ -122,6 +138,7 @@ function render(ev) {
   if (ev.type === "user") add("user", ev.text);
   else if (ev.type === "agent") add("agent", ev.text);
   else if (ev.type === "event") add("event", ev.text);
+  else if (ev.type === "open") { const d = add("event", "🔗 " + ev.text); d.style.cursor = "pointer"; d.onclick = () => openLink(ev.text); }
   else if (ev.type === "image") {
     const d = document.createElement("div"); d.className = "imgmsg";
     const a = document.createElement("a");
@@ -150,7 +167,15 @@ async function poll() {
   if (!token) { showLogin(); return; }
   try {
     const s = await api("/api/poll?after=" + after);
-    for (const ev of s.events) { render(ev); after = Math.max(after, ev.id); }
+    for (const ev of s.events) {
+      render(ev);
+      if (!firstPoll) {  // eski (saqlangan) xabarlarni qayta o'qimaymiz/ochmaymiz
+        if (ev.type === "agent") speak(ev.text);
+        if (ev.type === "open") openLink(ev.text);
+      }
+      after = Math.max(after, ev.id);
+    }
+    firstPoll = false;
     busy = s.busy;
     setOnline(true);
   } catch (e) {
@@ -213,6 +238,13 @@ $("audioFile").onchange = e => {
   const f = e.target.files[0];
   if (f) uploadVoice(f, f.name);
   e.target.value = "";
+};
+$("ttsBtn").textContent = ttsOn ? "🔊" : "🔇";
+$("ttsBtn").onclick = () => {
+  ttsOn = !ttsOn;
+  $("ttsBtn").textContent = ttsOn ? "🔊" : "🔇";
+  try { localStorage.setItem("tts", ttsOn ? "on" : "off"); } catch (e) {}
+  if (!ttsOn && player) player.pause();
 };
 $("send").onclick = send;
 $("text").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });

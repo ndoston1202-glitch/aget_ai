@@ -88,6 +88,33 @@ class PhoneSession:
         self.pending: dict[int, dict] = {}
         self.busy = False
         self.agent = None
+        self._saved_state = None
+        self._load()
+
+    # --- saqlash: telefondagi suhbat kompyuter qayta yonganda ham qoladi ---
+    @property
+    def _file(self):
+        return config.CHATS_DIR / "phone.json"
+
+    def _load(self):
+        try:
+            data = json.loads(self._file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        self.events = [e for e in data.get("events", []) if e.get("type") in ("user", "agent", "image", "event")]
+        self.next_id = max([e["id"] for e in self.events] + [0]) + 1
+        self._saved_state = data.get("state")
+
+    def _save(self):
+        try:
+            with self.lock:
+                events = [e for e in self.events if e["type"] in ("user", "agent", "image")][-300:]
+            state = self.agent.export_state() if self.agent else self._saved_state
+            tmp = self._file.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"events": events, "state": state}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self._file)
+        except Exception as e:
+            config.log_error(f"phone save: {type(e).__name__}: {e}")
 
     def emit(self, kind: str, text: str, **extra) -> int:
         with self.lock:
@@ -124,6 +151,11 @@ class PhoneSession:
             self.busy = True
         if self.agent is None:
             self.agent = self.make_agent(PhoneHuman(self))
+            if self._saved_state is not None:
+                try:
+                    self.agent.load_state(self._saved_state)
+                except Exception as e:
+                    config.log_error(f"phone load_state: {e}")
         self.emit("user", text)
         self.on_log(f"📱 Telefondan: {text}")
 
@@ -136,6 +168,7 @@ class PhoneSession:
             self.on_log(f"📱 Agent telefonga javob berdi: {ans[:200]}")
             with self.lock:
                 self.busy = False
+            self._save()
         threading.Thread(target=work, daemon=True).start()
         return True
 
@@ -169,6 +202,8 @@ class PhoneSession:
             self.events = []
         if self.agent:
             self.agent.reset()
+        self._saved_state = None
+        self._save()
         return True
 
     def snapshot(self, after: int) -> dict:
@@ -186,6 +221,10 @@ class PhoneHuman(Human):
 
     def approve(self, action: str) -> bool:
         return self.session.wait_answer("approve", action) is True
+
+    def open_on_device(self, url: str) -> None:
+        """Havolani telefonning o'zida ochadi (YouTube ilovasi, brauzer)."""
+        self.session.emit("open", url)
 
     def ask(self, question: str) -> str:
         ans = self.session.wait_answer("ask", question)
@@ -272,6 +311,20 @@ def make_handler(session: PhoneSession, token: str):
             if not self._authorized():
                 return self._json(401, {"error": "Kod noto'g'ri"})
             path = urlparse(self.path).path
+            if path == "/api/tts":  # javobni ovozga aylantirib telefonga beradi
+                text = str(self._body().get("text", ""))[:2000]
+                try:
+                    from . import voice
+                    wav = voice.synthesize(text).read_bytes()
+                except Exception as e:
+                    config.log_error(f"phone tts: {type(e).__name__}: {e}")
+                    return self._json(500, {"error": "Ovozga aylantirib bo'lmadi"})
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Length", str(len(wav)))
+                self.end_headers()
+                self.wfile.write(wav)
+                return
             if path == "/api/voice":
                 n = int(self.headers.get("Content-Length") or 0)
                 if not 0 < n <= 20_000_000:
