@@ -3,6 +3,7 @@
 Claude agenti (core.Agent) bilan bir xil ishlaydi: o'ylaydi -> amal bajaradi -> natijani ko'radi.
 """
 import re
+import time
 
 from google import genai
 from google.genai import errors, types
@@ -67,12 +68,23 @@ class GeminiAgent:
         self.human = human
         self.contents: list[types.Content] = []
         self.model = config.GEMINI_MODEL
+        self._thinking = types.ThinkingConfig(thinking_level=config.GEMINI_THINKING)
 
     def _generate(self, **kw):
         """So'rov yuboradi; model eskirgan bo'lsa (404), mavjud eng yangisiga o'tib qayta urinadi."""
+        t = time.time()
         try:
-            return self.client.models.generate_content(model=self.model, **kw)
+            resp = self.client.models.generate_content(model=self.model, **kw)
+            config.log_error(f"ok model={self.model} {time.time() - t:.1f}s")
+            return resp
         except errors.APIError as e:
+            # Model "o'ylash" sozlamasini qo'llamasa - sozlamasiz qayta urinamiz
+            if e.code == 400 and "thinking" in str(e.message).lower() and self._thinking is not None:
+                self._thinking = None
+                cfg = kw.get("config")
+                if cfg is not None:
+                    cfg.thinking_config = None
+                return self.client.models.generate_content(model=self.model, **kw)
             if e.code != 404:
                 raise
             new = pick_model(self.client)
@@ -90,6 +102,7 @@ class GeminiAgent:
             tools=_TOOLS,
             # Vositalarni SDK emas, o'zimiz chaqiramiz - ruxsat so'rash uchun
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            thinking_config=self._thinking,
         )
 
     def _complete_json(self, prompt: str, schema: dict) -> str:
