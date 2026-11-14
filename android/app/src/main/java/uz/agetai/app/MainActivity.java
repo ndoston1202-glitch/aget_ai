@@ -1,6 +1,18 @@
 package uz.agetai.app;
 
+import android.Manifest;
 import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.media.MediaRecorder;
+import android.webkit.JavascriptInterface;
+import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -32,6 +44,96 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
+    private String serverAddr, serverCode;
+    private MediaRecorder recorder;
+    private File voiceFile;
+
+    /** Chat sahifasidan chaqiriladi: telefon mikrofoni orqali ovozli xabar yozish. */
+    public class VoiceBridge {
+        @JavascriptInterface
+        public boolean startVoice() {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2));
+                return false;
+            }
+            try {
+                voiceFile = new File(getCacheDir(), "ovoz.m4a");
+                recorder = new MediaRecorder();
+                recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+                recorder.setAudioSamplingRate(44100);
+                recorder.setAudioEncodingBitRate(96000);
+                recorder.setOutputFile(voiceFile.getAbsolutePath());
+                recorder.prepare();
+                recorder.start();
+                return true;
+            } catch (Exception e) {
+                releaseRecorder();
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void stopVoice() {
+            boolean ok = true;
+            try {
+                recorder.stop();
+            } catch (Exception e) {
+                ok = false;  // juda qisqa yozuv
+            }
+            releaseRecorder();
+            if (!ok) {
+                sendToPage("{\"error\":\"Yozuv juda qisqa, qayta urinib ko'ring\"}");
+                return;
+            }
+            new Thread(() -> sendToPage(uploadVoice())).start();
+        }
+    }
+
+    private void releaseRecorder() {
+        if (recorder != null) {
+            try { recorder.release(); } catch (Exception ignored) { }
+            recorder = null;
+        }
+    }
+
+    private String uploadVoice() {
+        try {
+            byte[] data;
+            try (InputStream in = new FileInputStream(voiceFile)) {
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                byte[] chunk = new byte[16384];
+                int n;
+                while ((n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+                data = buf.toByteArray();
+            }
+            HttpURLConnection c = (HttpURLConnection) new URL("http://" + serverAddr + "/api/voice").openConnection();
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(120000);
+            c.setRequestProperty("X-Token", serverCode);
+            c.setRequestProperty("X-Filename", "ovoz.m4a");
+            c.setRequestProperty("Content-Type", "audio/mp4");
+            c.setFixedLengthStreamingMode(data.length);
+            try (OutputStream out = c.getOutputStream()) { out.write(data); }
+            InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] chunk = new byte[4096];
+            int n;
+            while (in != null && (n = in.read(chunk)) > 0) buf.write(chunk, 0, n);
+            return buf.toString("UTF-8");
+        } catch (Exception e) {
+            return "{\"error\":\"Ovozni yuborib bo'lmadi\"}";
+        }
+    }
+
+    private void sendToPage(String json) {
+        runOnUiThread(() -> {
+            if (web != null) web.evaluateJavascript("onVoiceResult(" + JSONObject.quote(json) + ")", null);
+        });
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -121,7 +223,10 @@ public class MainActivity extends Activity {
 
     /** Asosiy ekran: kompyuterdagi chat sahifasi. */
     private void showWeb(String addr, String code) {
+        serverAddr = addr;
+        serverCode = code;
         web = new WebView(this);
+        web.addJavascriptInterface(new VoiceBridge(), "AgetAndroid");
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);

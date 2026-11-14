@@ -41,7 +41,12 @@ INDEX_HTML = r"""<!doctype html>
            background:var(--card); border-top:1px solid var(--border); }
   #text { flex:1; min-width:0; resize:none; max-height:120px; padding:10px 12px; border-radius:12px;
           border:1px solid var(--border); background:var(--bg); color:var(--text); font:inherit; }
-  #send:disabled { opacity:.5; }
+  #send:disabled, #mic:disabled { opacity:.5; }
+  #mic { border:0; border-radius:10px; padding:10px 12px; font-size:18px; background:var(--card);
+         border:1px solid var(--border); color:var(--text); }
+  #mic.rec { background:#ef4444; color:#fff; border-color:#ef4444; }
+  .imgmsg { align-self:flex-start; max-width:88%; }
+  .imgmsg img { max-width:100%; border-radius:12px; display:block; }
   #status { text-align:center; color:var(--muted); font-size:13px; padding:4px; }
   #login { padding:24px 16px; display:none; flex-direction:column; gap:10px; }
   #login input { padding:12px; border-radius:10px; border:1px solid var(--border); background:var(--card);
@@ -57,7 +62,8 @@ INDEX_HTML = r"""<!doctype html>
 </div>
 <div id="log"></div>
 <div id="status"></div>
-<footer><textarea id="text" rows="1" placeholder="Topshiriq yozing..."></textarea><button id="send">➤</button></footer>
+<footer><button id="mic" title="Ovozli xabar">🎤</button><textarea id="text" rows="1" placeholder="Topshiriq yozing..."></textarea><button id="send">➤</button></footer>
+<input type="file" id="audioFile" accept="audio/*" style="display:none">
 <script>
 const qs = new URLSearchParams(location.search);
 let token = qs.get("token") || "";
@@ -116,6 +122,14 @@ function render(ev) {
   if (ev.type === "user") add("user", ev.text);
   else if (ev.type === "agent") add("agent", ev.text);
   else if (ev.type === "event") add("event", ev.text);
+  else if (ev.type === "image") {
+    const d = document.createElement("div"); d.className = "imgmsg";
+    const a = document.createElement("a");
+    a.href = "/api/file?p=" + encodeURIComponent(ev.text) + "&token=" + encodeURIComponent(token);
+    const img = document.createElement("img"); img.src = a.href; img.alt = ev.text;
+    img.onload = () => { log.scrollTop = log.scrollHeight; };
+    a.appendChild(img); d.appendChild(a); log.appendChild(d);
+  }
   else if (ev.type === "approve" || ev.type === "ask") addPrompt(ev);
   else if (ev.type === "answered") {
     const d = $("p" + ev.ref);
@@ -129,6 +143,7 @@ function setOnline(v) {
   $("status").textContent = v ? (busy ? "⏳ Agent ishlayapti..." : "")
                               : "Kompyuter bilan aloqa yo'q. Kompyuter yoqilgan va aget_ai ochiqligini tekshiring.";
   $("send").disabled = !v || busy;
+  $("mic").disabled = !v || (busy && !recording);
 }
 
 async function poll() {
@@ -164,6 +179,40 @@ $("loginBtn").onclick = () => {
   $("login").style.display = "none";
   log.style.display = "flex";
   poll();
+};
+// ---- Ovozli xabar ----
+// APK ichida: telefon mikrofoni orqali (window.AgetAndroid). Brauzerda: ovozli faylni tanlash.
+let recording = false;
+function uploadVoice(blob, name) {
+  $("status").textContent = "🎤 Ovoz matnga aylantirilmoqda...";
+  fetch("/api/voice", {method: "POST", headers: {"X-Token": token, "X-Filename": name}, body: blob})
+    .then(r => r.json()).then(onVoiceResult).catch(() => onVoiceResult({error: "Yuborib bo'lmadi"}));
+}
+window.onVoiceResult = function (r) {
+  if (typeof r === "string") { try { r = JSON.parse(r); } catch (e) { r = {error: r}; } }
+  if (r.error && !r.text) add("event", "⚠️ " + r.error);
+  else if (r.error) add("event", "⚠️ " + r.error + "\nMatn: " + r.text);
+  $("status").textContent = "";
+};
+window.onVoiceState = function (isRec, msg) {
+  recording = isRec;
+  $("mic").classList.toggle("rec", isRec);
+  $("mic").textContent = isRec ? "⏹" : "🎤";
+  if (msg) $("status").textContent = msg;
+};
+$("mic").onclick = () => {
+  if (window.AgetAndroid) {
+    if (recording) { window.AgetAndroid.stopVoice(); onVoiceState(false, "🎤 Yuborilmoqda..."); }
+    else if (window.AgetAndroid.startVoice()) onVoiceState(true, "🔴 Yozilmoqda... tugatish uchun ⏹ ni bosing");
+    else $("status").textContent = "Mikrofonga ruxsat bering va qayta bosing.";
+  } else {
+    $("audioFile").click();
+  }
+};
+$("audioFile").onchange = e => {
+  const f = e.target.files[0];
+  if (f) uploadVoice(f, f.name);
+  e.target.value = "";
 };
 $("send").onclick = send;
 $("text").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });

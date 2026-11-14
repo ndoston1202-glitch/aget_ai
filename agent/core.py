@@ -105,6 +105,8 @@ class Agent:
                 used_tools = True
                 on_event(f"🔧 {block.name}({_short(block.input)})")
                 output, is_error = execute(block.name, block.input, self.human)
+                if block.name == "generate_image" and not is_error:
+                    on_event("🖼 " + output.split(": ", 1)[-1])
                 transcript.append(f"TOOL {block.name}({_short(block.input)}) -> "
                                   f"{'XATO: ' if is_error else ''}{output[:1500]}")
                 results.append({"type": "tool_result", "tool_use_id": block.id,

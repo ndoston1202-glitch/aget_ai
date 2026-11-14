@@ -125,6 +125,17 @@ TOOL_DEFS = [
         }, ["prompt", "every_minutes", "allow_actions"]),
     },
     {
+        "name": "generate_image",
+        "description": "Matn tavsifi asosida rasm yaratadi va workspace/images/ ga saqlaydi. "
+                       "Tavsifni batafsil yoz (ingliz tilida yozsang natija yaxshiroq).",
+        "input_schema": _schema({"prompt": {"type": "string"}}, ["prompt"]),
+    },
+    {
+        "name": "transcribe_audio",
+        "description": "Ovozli faylni (mp3, m4a, ogg, wav...) matnga aylantiradi.",
+        "input_schema": _schema({"path": {"type": "string"}}, ["path"]),
+    },
+    {
         "name": "list_scheduled_tasks",
         "description": "Barcha takrorlanuvchi vazifalar ro'yxati.",
         "input_schema": _schema({}, []),
@@ -188,6 +199,15 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
             raw = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
             text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).strip()
             return _truncate(text, 15000), False
+
+        if name == "generate_image":
+            from .media import generate_image
+            out = generate_image(args["prompt"])
+            return f"Rasm yaratildi va saqlandi: {out}", False
+
+        if name == "transcribe_audio":
+            from .media import transcribe
+            return transcribe(_resolve(args["path"])), False
 
         if name == "ask_user":
             return human.ask(args["question"]), False

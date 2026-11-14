@@ -4,6 +4,10 @@ Telefon /api/... manzillariga so'rov yuboradi; har bir so'rov maxfiy kod (token)
 """
 import hmac
 import json
+import mimetypes
+import re
+import uuid
+from pathlib import Path
 import secrets
 import socket
 import threading
@@ -94,7 +98,7 @@ class PhoneSession:
 
         def work():
             try:
-                ans = self.agent.run(text, on_event=lambda m: self.emit("event", m))
+                ans = self.agent.run(text, on_event=self._on_event)
             except Exception as e:
                 ans = f"Kutilmagan xato: {e}"
             self.emit("agent", ans)
@@ -103,6 +107,29 @@ class PhoneSession:
                 self.busy = False
         threading.Thread(target=work, daemon=True).start()
         return True
+
+    def _on_event(self, m: str):
+        if m.startswith("🖼 "):
+            try:
+                rel = Path(m[2:].strip()).resolve().relative_to(config.WORKSPACE_DIR.resolve())
+                self.emit("image", rel.as_posix())
+                return
+            except ValueError:
+                pass
+        self.emit("event", m)
+
+    def voice(self, data: bytes, filename: str) -> dict:
+        """Ovozli xabarni saqlaydi, matnga aylantiradi va agentga topshiradi."""
+        from .media import transcribe
+        ext = (re.search(r"\.[A-Za-z0-9]{1,5}$", filename or "") or [".m4a"])[0].lower()
+        path = config.WORKSPACE_DIR / "voice" / f"ovoz_{uuid.uuid4().hex[:8]}{ext}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        text = transcribe(path)
+        self.emit("event", "🎤 Ovozli xabar matnga aylantirildi")
+        if not self.send(text):
+            return {"text": text, "sent": False, "error": "Agent hali oldingi ishni bajaryapti"}
+        return {"text": text, "sent": True}
 
     def reset(self):
         with self.lock:
@@ -193,6 +220,19 @@ def make_handler(session: PhoneSession, token: str):
             if path == "/api/poll":
                 after = int((parse_qs(urlparse(self.path).query).get("after") or ["0"])[0] or 0)
                 return self._json(200, session.snapshot(after))
+            if path == "/api/file":
+                rel = (parse_qs(urlparse(self.path).query).get("p") or [""])[0]
+                root = config.WORKSPACE_DIR.resolve()
+                f = (root / rel).resolve()
+                if not f.is_file() or not f.is_relative_to(root):
+                    return self._json(404, {"error": "topilmadi"})
+                body = f.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", mimetypes.guess_type(f.name)[0] or "application/octet-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/api/ping":
                 return self._json(200, {"ok": True, "provider": config.provider()})
             self._json(404, {"error": "topilmadi"})
@@ -201,6 +241,14 @@ def make_handler(session: PhoneSession, token: str):
             if not self._authorized():
                 return self._json(401, {"error": "Kod noto'g'ri"})
             path = urlparse(self.path).path
+            if path == "/api/voice":
+                n = int(self.headers.get("Content-Length") or 0)
+                if not 0 < n <= 20_000_000:
+                    return self._json(400, {"error": "Ovozli fayl bo'sh yoki juda katta"})
+                try:
+                    return self._json(200, session.voice(self.rfile.read(n), self.headers.get("X-Filename", "")))
+                except Exception as e:
+                    return self._json(500, {"error": f"Ovozni matnga aylantirib bo'lmadi: {e}"})
             data = self._body()
             if path == "/api/send":
                 text = str(data.get("text", "")).strip()

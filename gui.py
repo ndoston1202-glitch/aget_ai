@@ -6,7 +6,7 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import messagebox, scrolledtext, simpledialog, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 from agent import config, memory, scheduler, server, updater
 from agent.tools import AutoHuman, Human
@@ -139,6 +139,8 @@ class App:
         self.entry = ttk.Entry(bottom, font=("Segoe UI", 11))
         self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", lambda e: self.send())
+        self.voice_btn = ttk.Button(bottom, text="🎤 Ovozli fayl", command=self.send_voice_file)
+        self.voice_btn.pack(side="left", padx=(8, 0))
         self.send_btn = ttk.Button(bottom, text="Yuborish", command=self.send)
         self.send_btn.pack(side="left", padx=(8, 0))
         self.status = ttk.Label(root, text="", padding=(8, 0, 8, 6))
@@ -163,15 +165,65 @@ class App:
                 elif kind == "done":
                     self.write(f"🤖 {data}", "agent")
                     self._set_busy(False)
+                elif kind == "event" and data.startswith("🖼 "):
+                    self.show_image(data[2:].strip())
                 else:
                     self.write(data, kind)
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
 
+    def show_image(self, path: str):
+        try:
+            img = tk.PhotoImage(file=path)
+            factor = max(1, img.width() // 420 + (1 if img.width() % 420 else 0))
+            if factor > 1:
+                img = img.subsample(factor, factor)
+            self.images = getattr(self, "images", []) + [img]  # rasm o'chib ketmasligi uchun
+            self.chat.config(state="normal")
+            self.chat.image_create("end", image=img)
+            self.chat.insert("end", f"\n{path}\n\n", "event")
+            self.chat.config(state="disabled")
+            self.chat.see("end")
+        except Exception:
+            self.write(f"🖼 Rasm saqlandi: {path}", "event")
+
+    def send_voice_file(self):
+        if self.busy:
+            return
+        path = filedialog.askopenfilename(
+            title="Ovozli xabarni tanlang", parent=self.root,
+            filetypes=[("Ovozli fayllar", "*.mp3 *.m4a *.ogg *.oga *.opus *.wav *.aac *.flac *.amr *.webm"),
+                       ("Barcha fayllar", "*.*")])
+        if not path:
+            return
+        self._set_busy(True)
+        self.status.config(text="🎤 Ovoz matnga aylantirilmoqda...")
+
+        def work():
+            from agent.media import transcribe
+            try:
+                text = transcribe(path)
+            except Exception as e:
+                def fail():
+                    self._set_busy(False)
+                    self.write(f"Ovozni matnga aylantirib bo'lmadi: {e}", "error")
+                self.events.put(("call", fail))
+                return
+
+            def ok():
+                self._set_busy(False)
+                self.write("🎤 Ovozli xabar matnga aylantirildi", "event")
+                self.entry.delete(0, "end")
+                self.entry.insert(0, text)
+                self.send()
+            self.events.put(("call", ok))
+        threading.Thread(target=work, daemon=True).start()
+
     def _set_busy(self, busy: bool):
         self.busy = busy
         self.send_btn.config(state="disabled" if busy else "normal")
+        self.voice_btn.config(state="disabled" if busy else "normal")
         self.status.config(text="⏳ Agent ishlayapti..." if busy else "")
 
     # --- ishga tushish ---

@@ -119,6 +119,8 @@ class GeminiAgent:
                 args = dict(fc.args or {})
                 on_event(f"🔧 {fc.name}({_short(args)})")
                 output, is_error = execute(fc.name, args, self.human)
+                if fc.name == "generate_image" and not is_error:
+                    on_event("🖼 " + output.split(": ", 1)[-1])
                 transcript.append(f"TOOL {fc.name}({_short(args)}) -> "
                                   f"{'XATO: ' if is_error else ''}{output[:1500]}")
                 parts.append(types.Part.from_function_response(
