@@ -8,7 +8,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
-from agent import config, memory, scheduler
+from agent import config, memory, scheduler, updater
 from agent.tools import AutoHuman, Human
 
 KEY_URLS = {
@@ -113,6 +113,7 @@ class App:
         self.agent = None
         self.busy = False
         root.title("aget_ai — shaxsiy AI agent")
+        self.updating = False
         root.geometry("820x600")
 
         menu = tk.Menu(root)
@@ -120,6 +121,7 @@ class App:
         menu.add_command(label="Vazifalar", command=self.show_tasks)
         menu.add_command(label="Xotira", command=self.show_memory)
         menu.add_command(label="Sozlamalar", command=self.open_settings)
+        menu.add_command(label="Yangilash", command=lambda: self.check_update(manual=True))
         root.config(menu=menu)
 
         self.chat = scrolledtext.ScrolledText(root, wrap="word", state="disabled",
@@ -173,6 +175,7 @@ class App:
     # --- ishga tushish ---
     def _startup(self):
         scheduler.Scheduler(self.run_scheduled).start()
+        self._auto_update_loop()
         if not apply_settings(load_settings()):
             self.write("Xush kelibsiz! Avval API kalitini kiriting (Gemini bepul).", "event")
             if not self.open_settings():
@@ -186,7 +189,66 @@ class App:
     def _create_agent(self):
         from agent.core import make_agent
         self.agent = make_agent(GuiHuman(self))
-        self.root.title(f"aget_ai — shaxsiy AI agent ({config.provider()})")
+        self.root.title(f"aget_ai — shaxsiy AI agent ({config.provider()}) — v{updater.current_version()}")
+
+    # --- yangilanish ---
+    def _auto_update_loop(self):
+        """Ishga tushganda va har 6 soatda yangi versiyani tekshiradi."""
+        self.check_update(manual=False)
+        self.root.after(6 * 3600 * 1000, self._auto_update_loop)
+
+    def check_update(self, manual: bool):
+        if self.updating:
+            return
+        if not updater.can_update():
+            if manual:
+                messagebox.showinfo("Yangilash", "Yangilash faqat Windows .exe versiyasida ishlaydi.",
+                                    parent=self.root)
+            return
+
+        def work():
+            try:
+                info = updater.check()
+            except Exception as e:
+                if manual:
+                    self.events.put(("call", lambda: messagebox.showerror(
+                        "Yangilash", f"Tekshirib bo'lmadi: {e}", parent=self.root)))
+                return
+            if info:
+                self.events.put(("call", lambda: self._offer_update(info)))
+            elif manual:
+                self.events.put(("call", lambda: messagebox.showinfo(
+                    "Yangilash", f"Sizda eng so'nggi versiya (v{updater.current_version()}).",
+                    parent=self.root)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _offer_update(self, info: dict):
+        if self.updating:
+            return
+        mb = info["size"] / 1_048_576
+        if not messagebox.askyesno(
+                "Yangi versiya chiqdi",
+                f"aget_ai ning yangi versiyasi bor (v{info['sha'][:7]}, {mb:.0f} MB).\n"
+                "Hozir yangilansinmi? Dastur yopilib, o'zi qayta ochiladi.", parent=self.root):
+            return
+        if self.busy and not messagebox.askyesno(
+                "Diqqat", "Agent hozir ishlayapti. Baribir yangilansinmi?", parent=self.root):
+            return
+        self.updating = True
+        self.send_btn.config(state="disabled")
+
+        def work():
+            try:
+                new = updater.download(info, on_progress=lambda pct: self.events.put(
+                    ("call", lambda: self.status.config(text=f"⬇️ Yangilanish yuklanmoqda... {pct}%"))))
+                self.events.put(("call", lambda: updater.install_and_restart(new)))
+            except Exception as e:
+                def fail():
+                    self.updating = False
+                    self._set_busy(self.busy)
+                    messagebox.showerror("Yangilash", f"Yangilab bo'lmadi: {e}", parent=self.root)
+                self.events.put(("call", fail))
+        threading.Thread(target=work, daemon=True).start()
 
     def open_settings(self) -> bool:
         dlg = SettingsDialog(self.root, load_settings())
@@ -276,7 +338,8 @@ def selftest() -> int:
     """CI uchun: barcha modullar .exe ichida yuklanishini tekshiradi."""
     import agent.core  # noqa: F401
     import agent.gemini_core  # noqa: F401
-    return 0
+    from agent import updater
+    return 0 if updater.BUILD_SHA != "dev" else 3
 
 
 if __name__ == "__main__":

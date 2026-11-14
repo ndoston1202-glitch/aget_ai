@@ -23,6 +23,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Versiya raqamini yozish
+        shell: bash
+        run: echo "BUILD_SHA = \"$GITHUB_SHA\"" > agent/_version.py
+
       - name: .exe yasash
         run: >
           pyinstaller --noconfirm --onefile --windowed --name aget_ai

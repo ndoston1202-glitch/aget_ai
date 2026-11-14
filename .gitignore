@@ -7,3 +7,4 @@ workspace/
 build/
 dist/
 *.spec
+agent/_version.py
