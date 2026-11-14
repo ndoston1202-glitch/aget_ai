@@ -14,11 +14,13 @@ import customtkinter as ctk
 from agent import config, memory, scheduler, server, updater
 from agent.tools import AutoHuman, Human
 
-KEY_URLS = {
-    "gemini": "https://aistudio.google.com/apikey",
-    "claude": "https://console.anthropic.com/settings/keys",
-}
-KEY_ENV = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
+# Ulanadigan AI'lar: (nomi, sarlavha, izoh, kalit olish sahifasi)
+AI_LIST = [
+    ("groq", "Groq", "bepul, juda tez — tavsiya", "https://console.groq.com/keys"),
+    ("gemini", "Google Gemini", "bepul, rasm yaratadi", "https://aistudio.google.com/apikey"),
+    ("claude", "Claude (Anthropic)", "pullik, eng aqlli", "https://console.anthropic.com/settings/keys"),
+]
+KEY_ENV = dict(config.PROVIDERS)
 
 # Ranglar: (yorug' mavzu, qorong'i mavzu)
 ACCENT = ("#2563eb", "#3b82f6")
@@ -41,9 +43,13 @@ GREETING = ("Assalomu alaykum! Men sizning shaxsiy yordamchingizman. Bugun nima 
 
 def load_settings() -> dict:
     try:
-        return json.loads(config.SETTINGS_FILE.read_text(encoding="utf-8"))
+        s = json.loads(config.SETTINGS_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    # Eski format: bitta "provider" + "api_key" -> har bir AI uchun alohida kalit
+    if "keys" not in s and s.get("api_key"):
+        s["keys"] = {s.get("provider", "gemini"): s["api_key"]}
+    return s
 
 
 def save_settings(updates: dict) -> dict:
@@ -62,15 +68,15 @@ def apply_settings(s: dict) -> bool:
         os.environ["GITHUB_TOKEN"] = s["github_token"]
     else:
         os.environ.pop("GITHUB_TOKEN", None)
-    prov = s.get("provider", "gemini")
-    key = s.get("api_key", "").strip()
-    if not key:
-        return False
-    for env in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
-        os.environ.pop(env, None)
-    os.environ["AGENT_PROVIDER"] = prov
-    os.environ[KEY_ENV[prov]] = key
-    return True
+    os.environ.pop("GOOGLE_API_KEY", None)
+    os.environ["AGENT_PROVIDER"] = "auto"  # kaliti bor AI'lar orasida avtomatik almashish
+    keys = s.get("keys") or {}
+    for name, env in config.PROVIDERS:
+        if keys.get(name, "").strip():
+            os.environ[env] = keys[name].strip()
+        else:
+            os.environ.pop(env, None)
+    return bool(config.configured_providers())
 
 
 def link_label(master, text, url):
@@ -83,7 +89,7 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, master, current: dict):
         super().__init__(master)
         self.title("Sozlamalar")
-        self.geometry("520x560")
+        self.geometry("540x640")
         self.resizable(False, False)
         self.result = None
         self.transient(master)
@@ -93,20 +99,22 @@ class SettingsDialog(ctk.CTkToplevel):
         f.pack(fill="both", expand=True, padx=24, pady=20)
         ctk.CTkLabel(f, text="Sozlamalar", font=(FONT, 20, "bold")).pack(anchor="w")
 
-        ctk.CTkLabel(f, text="AI xizmati", font=(FONT, 13, "bold")).pack(anchor="w", pady=(16, 4))
-        self.prov = ctk.StringVar(value=current.get("provider", "gemini"))
-        ctk.CTkSegmentedButton(f, values=["gemini", "claude"], variable=self.prov).pack(anchor="w")
-        ctk.CTkLabel(f, text="Gemini — bepul, Claude — pullik va kuchliroq", text_color=MUTED,
-                     font=(FONT, 12)).pack(anchor="w")
-
-        ctk.CTkLabel(f, text="API kaliti", font=(FONT, 13, "bold")).pack(anchor="w", pady=(14, 4))
-        self.key = ctk.CTkEntry(f, show="•", height=36)
-        self.key.insert(0, current.get("api_key", ""))
-        self.key.pack(fill="x")
-        kl = ctk.CTkLabel(f, text="Kalitni qayerdan olaman?", text_color=ACCENT, cursor="hand2",
-                          font=(FONT, 12, "underline"))
-        kl.bind("<Button-1>", lambda e: webbrowser.open(KEY_URLS[self.prov.get()]))
-        kl.pack(anchor="w")
+        ctk.CTkLabel(f, text="Kamida bitta AI kalitini kiriting. Bir nechtasini kiritsangiz, birining limiti "
+                             "tugaganda agent o'zi keyingisiga o'tadi (yuqoridagisi birinchi ishlatiladi).",
+                     text_color=MUTED, font=(FONT, 12), wraplength=470, justify="left").pack(anchor="w", pady=(6, 4))
+        keys = current.get("keys") or {}
+        self.keys = {}
+        for name, title, note, url in AI_LIST:
+            head = ctk.CTkFrame(f, fg_color="transparent")
+            head.pack(fill="x", pady=(10, 2))
+            ctk.CTkLabel(head, text=title, font=(FONT, 13, "bold")).pack(side="left")
+            ctk.CTkLabel(head, text=f"  {note}", text_color=MUTED, font=(FONT, 12)).pack(side="left")
+            link_label(head, "kalit olish", url).pack(side="right")
+            e = ctk.CTkEntry(f, show="•", height=34, placeholder_text="kalitni shu yerga qo'ying")
+            if keys.get(name):
+                e.insert(0, keys[name])
+            e.pack(fill="x")
+            self.keys[name] = e
 
         ctk.CTkLabel(f, text="GitHub tokeni (ixtiyoriy)", font=(FONT, 13, "bold")).pack(anchor="w", pady=(14, 4))
         self.gh = ctk.CTkEntry(f, show="•", height=36)
@@ -127,11 +135,11 @@ class SettingsDialog(ctk.CTkToplevel):
         self.bind("<Return>", lambda e: self._save())
 
     def _save(self):
-        if not self.key.get().strip():
-            messagebox.showwarning("Kalit kerak", "API kalitini kiriting.", parent=self)
+        keys = {name: e.get().strip() for name, e in self.keys.items()}
+        if not any(keys.values()):
+            messagebox.showwarning("Kalit kerak", "Kamida bitta AI kalitini kiriting.", parent=self)
             return
-        self.result = save_settings({"provider": self.prov.get(), "api_key": self.key.get().strip(),
-                                     "github_token": self.gh.get().strip(),
+        self.result = save_settings({"keys": keys, "github_token": self.gh.get().strip(),
                                      "voice_reply": bool(self.voice.get()),
                                      "autostart": bool(self.autostart.get())})
         self.destroy()
@@ -502,7 +510,7 @@ class App:
         self._auto_update_loop()
         self._start_phone_server()
         if not apply_settings(load_settings()):
-            self.write("Xush kelibsiz! Boshlash uchun API kalitini kiriting (Gemini bepul).", "event")
+            self.write("Xush kelibsiz! Boshlash uchun kamida bitta AI kalitini kiriting (Groq bepul va tez).", "event")
             if not self.open_settings():
                 self.write("Kalit kiritilmadi. Yuqoridagi \"Sozlamalar\" tugmasidan kiriting.", "error")
                 return
@@ -562,8 +570,9 @@ class App:
         if hasattr(self.agent, "on_switch"):
             self.agent.on_switch = lambda m: self.events.put(("call", lambda: self._model_switched(m)))
         saved = self._load_chat_file()
-        if saved and saved.get("provider") == config.provider():
-            self.agent.load_state(saved.get("state", []))
+        if saved:
+            if saved.get("provider") == config.provider():
+                self.agent.load_state(saved.get("state", []))
             if not self.display:
                 for tag, text in saved.get("display", []):
                     if tag == "image":
@@ -574,14 +583,11 @@ class App:
 
     def _update_subtitle(self):
         model = getattr(self.agent, "model", config.MODEL)
-        self.subtitle.configure(text=f"{config.provider()} · {model} · v{updater.current_version()}")
+        self.subtitle.configure(text=f"{model} · v{updater.current_version()}")
         self.root.title(f"AI Agent — v{updater.current_version()}")
 
     def _model_switched(self, model: str):
-        save_settings({"gemini_model": model})
-        config.GEMINI_MODEL = model
         self._update_subtitle()
-        self.write(f"ℹ️ Model javob bermadi, \"{model}\" modeliga o'tdim.", "event", record=False)
 
     # ---------- suhbat tarixi ----------
     @property
@@ -665,33 +671,46 @@ class App:
 
     # ---------- aloqani tekshirish ----------
     def run_diagnose(self):
+        """Kaliti kiritilgan har bir AI bilan aloqani tekshiradi."""
         if self.busy:
             return
-        if config.provider() != "gemini":
-            messagebox.showinfo("Tekshirish", "Tekshirish hozircha faqat Gemini uchun.", parent=self.root)
+        provs = config.configured_providers()
+        if not provs:
+            messagebox.showinfo("Tekshirish", "Avval Sozlamalarda AI kalitini kiriting.", parent=self.root)
             return
         self._set_busy(True)
-        self.write("🔎 Google Gemini bilan aloqa tekshirilmoqda (1-3 daqiqa)...", "event", record=False)
+        self.write("🔎 AI'lar bilan aloqa tekshirilmoqda (1-3 daqiqa)...", "event", record=False)
 
         def work():
-            from agent.gemini_core import diagnose
-            try:
-                best = diagnose(on_line=lambda m: self.events.put(("event", m)))
-            except Exception as e:
-                config.log_error(f"diagnose: {type(e).__name__}: {e}")
-                best = None
+            say = lambda m: self.events.put(("event", m))
+            ok = []
+            for p in provs:
+                say(f"— {p.capitalize()} —")
+                try:
+                    if p == "groq":
+                        from agent.groq_core import diagnose
+                    elif p == "gemini":
+                        from agent.gemini_core import diagnose
+                    else:
+                        say("Claude pullik, tekshiruvsiz qoldirildi (kalit kiritilgan).")
+                        ok.append(p)
+                        continue
+                    best = diagnose(on_line=say)
+                    if best:
+                        ok.append(p)
+                        if p == "gemini":
+                            save_settings({"gemini_model": best})
+                            config.GEMINI_MODEL = best
+                except Exception as e:
+                    config.log_error(f"diagnose {p}: {type(e).__name__}: {e}")
+                    say(f"❌ {p}: {e}")
 
             def finish():
                 self._set_busy(False)
-                if best:
-                    save_settings({"gemini_model": best})
-                    config.GEMINI_MODEL = best
-                    if self.agent is not None and hasattr(self.agent, "model"):
-                        self.agent.model = best
-                    self._update_subtitle()
-                    self.write(f"✅ Tayyor: endi \"{best}\" modeli ishlatiladi.", "event", record=False)
+                if ok:
+                    self.write(f"✅ Ishlayotgan AI'lar: {', '.join(x.capitalize() for x in ok)}.", "event", record=False)
                 else:
-                    self.write("❌ Ishlaydigan model topilmadi. Natijani Claude'ga yuboring.", "error", record=False)
+                    self.write("❌ Hech bir AI ishlamadi. Natijani Claude'ga yuboring.", "error", record=False)
             self.events.put(("call", finish))
         threading.Thread(target=work, daemon=True).start()
 

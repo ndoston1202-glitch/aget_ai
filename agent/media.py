@@ -67,7 +67,20 @@ def generate_image(prompt: str) -> Path:
 
 
 def transcribe(path: Path) -> str:
-    """Ovozli faylni matnga aylantiradi (aytilgan tilda)."""
+    """Ovozli faylni matnga aylantiradi: avval Groq Whisper (bepul, tez), bo'lmasa Gemini."""
+    if os.environ.get("GROQ_API_KEY"):
+        try:
+            from .groq_core import transcribe as groq_transcribe
+            return groq_transcribe(path)
+        except Exception as e:
+            config.log_error(f"groq transcribe: {type(e).__name__}: {e}")
+            if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+                raise
+    return _gemini_transcribe(path)
+
+
+def _gemini_transcribe(path: Path) -> str:
+    """Ovozli faylni Gemini bilan matnga aylantiradi (aytilgan tilda)."""
     from google.genai import types
     path = Path(path)
     mime = AUDIO_TYPES.get(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "audio/mp4"

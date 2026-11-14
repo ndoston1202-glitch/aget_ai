@@ -37,11 +37,18 @@ TASKS_FILE = DATA_DIR / "tasks.json"
 LOG_DIR = DATA_DIR / "logs"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
-# Qaysi AI xizmati: "gemini" (bepul tarif bor) yoki "claude".
-# Ko'rsatilmasa: GEMINI_API_KEY o'rnatilgan bo'lsa gemini, aks holda claude.
 def provider() -> str:
-    has_gemini_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-    return os.environ.get("AGENT_PROVIDER", "gemini" if has_gemini_key else "claude").lower()
+    """'auto' - barcha kaliti bor AI'lar orasida avtomatik almashish (sukut). Yoki bitta: groq/gemini/claude."""
+    return os.environ.get("AGENT_PROVIDER", "auto").lower()
+
+
+# Ulanadigan AI'lar: (nomi, kalit o'zgaruvchisi). Tartib - qaysi biri birinchi ishlatiladi.
+PROVIDERS = [("groq", "GROQ_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("claude", "ANTHROPIC_API_KEY")]
+
+
+def configured_providers() -> list[str]:
+    """Kaliti kiritilgan AI'lar."""
+    return [name for name, env in PROVIDERS if os.environ.get(env, "").strip()]
 
 
 MODEL = os.environ.get("AGENT_MODEL", "claude-opus-5-5")  # Claude uchun

@@ -40,6 +40,16 @@ class Agent:
     def reset(self):
         self.messages = []
 
+    def undo_turn(self):
+        """Muvaffaqiyatsiz tugagan oxirgi navbatni olib tashlaydi."""
+        del self.messages[getattr(self, "_turn_start", len(self.messages)):]
+
+    def load_text_history(self, pairs: list) -> None:
+        """Boshqa AI'dan o'tganda suhbatni oddiy matn ko'rinishida yuklaydi."""
+        self.messages = []
+        for user, answer in pairs:
+            self.messages += [{"role": "user", "content": user}, {"role": "assistant", "content": answer}]
+
     MAX_SAVED = 80
 
     def export_state(self) -> list:
@@ -94,6 +104,8 @@ class Agent:
 
     def run(self, user_text: str, on_event=print, learn: bool = True) -> str:
         """Bitta vazifani oxirigacha bajaradi va yakuniy javobni qaytaradi."""
+        self.last_error = None  # "limit" | "auth" | "unavailable" - boshqa AI'ga o'tish uchun
+        self._turn_start = len(self.messages)
         self.messages.append({"role": "user", "content": user_text})
         transcript = [f"USER: {user_text}"]
         used_tools = False
@@ -103,13 +115,18 @@ class Agent:
             try:
                 resp = self._call()
             except anthropic.RateLimitError:
-                final = "API limitiga yetildi, birozdan keyin qayta urinib ko'ring."
+                final = "Claude limitiga yetildi, birozdan keyin qayta urinib ko'ring."
+                self.last_error = "limit"
                 break
             except anthropic.APIStatusError as e:
-                final = f"API xatosi ({e.status_code}): {e.message}"
+                final = f"Claude xatosi ({e.status_code}): {e.message}"
+                self.last_error = error_kind(e.status_code)
+                if "credit balance" in str(e.message).lower():
+                    self.last_error = "limit"
                 break
             except anthropic.APIConnectionError:
-                final = "Internetga ulanib bo'lmadi."
+                final = "Claude serveriga ulanib bo'lmadi."
+                self.last_error = "unavailable"
                 break
 
             self.messages.append({"role": "assistant", "content": resp.content})
@@ -160,9 +177,25 @@ def _short(data: dict, limit: int = 120) -> str:
     return s if len(s) <= limit else s[:limit] + "..."
 
 
+def error_kind(code) -> str:
+    """API xatosini turkumlaydi: limit (429), auth (kalit), unavailable (boshqa)."""
+    if code == 429:
+        return "limit"
+    if code in (401, 403):
+        return "auth"
+    return "unavailable"
+
+
 def make_agent(human: Human):
-    """Sozlamaga qarab Claude yoki Gemini agentini yaratadi."""
-    if config.provider() == "gemini":
+    """Agent yaratadi. Sukut bo'yicha - barcha ulangan AI'lar orasida avtomatik almashuvchi Router."""
+    prov = config.provider()
+    if prov == "gemini":
         from .gemini_core import GeminiAgent
         return GeminiAgent(human)
-    return Agent(human)
+    if prov == "groq":
+        from .groq_core import GroqAgent
+        return GroqAgent(human)
+    if prov == "claude":
+        return Agent(human)
+    from .router import Router
+    return Router(human)

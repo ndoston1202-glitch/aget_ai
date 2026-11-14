@@ -19,8 +19,8 @@ Claude (Anthropic API) asosida ishlaydi.
 
 1. Yuklab oling: **https://github.com/ndoston1202-glitch/aget_ai/releases/download/latest/aget_ai.exe**
 2. Faylni ikki marta bosing. Windows ogohlantirsa: **Подробнее (More info) → Выполнить в любом случае (Run anyway)**.
-3. Birinchi ochilishda **Gemini** ni tanlang va API kalitini kiriting
-   (bepul kalit: https://aistudio.google.com/apikey).
+3. Sozlamalarda kamida bitta AI kalitini kiriting. Eng yaxshisi bepul **Groq** (https://console.groq.com/keys).
+   Bir nechta AI kalitini kiritsangiz (Groq, Gemini, Claude), birining limiti tugaganda agent o'zi keyingisiga o'tadi.
 4. Pastdagi maydonga topshiriq yozib, **Yuborish** ni bosing.
 
 Birinchi ochilishda dastur **o'rnatishni taklif qiladi**: rozi bo'lsangiz `C:\AI Agent` papkasiga

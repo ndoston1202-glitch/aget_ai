@@ -9,7 +9,7 @@ from google import genai
 from google.genai import errors, types
 
 from . import config, memory
-from .core import SYSTEM_PROMPT, _short
+from .core import SYSTEM_PROMPT, _short, error_kind
 from .tools import FETCH_URL_DEF, TOOL_DEFS, Human, execute, system_context
 
 _DEFS = TOOL_DEFS + [FETCH_URL_DEF]
@@ -160,6 +160,15 @@ class GeminiAgent:
     def reset(self):
         self.contents = []
 
+    def undo_turn(self):
+        del self.contents[getattr(self, "_turn_start", len(self.contents)):]
+
+    def load_text_history(self, pairs: list) -> None:
+        self.contents = []
+        for user, answer in pairs:
+            self.contents += [types.Content(role="user", parts=[types.Part(text=user)]),
+                              types.Content(role="model", parts=[types.Part(text=answer)])]
+
     MAX_SAVED = 80  # saqlanadigan xabarlar soni (eskilari tashlanadi)
 
     def export_state(self) -> list:
@@ -198,6 +207,8 @@ class GeminiAgent:
         return resp.text or ""
 
     def run(self, user_text: str, on_event=print, learn: bool = True) -> str:
+        self.last_error = None
+        self._turn_start = len(self.contents)
         self.contents.append(types.Content(role="user", parts=[types.Part(text=user_text)]))
         transcript = [f"USER: {user_text}"]
         used_tools = False
@@ -209,6 +220,7 @@ class GeminiAgent:
             except Exception as e:
                 config.log_error(f"gemini model={self.model}: {type(e).__name__}: {e}")
                 final = describe_error(e)
+                self.last_error = error_kind(getattr(e, "code", None))
                 break
 
             cand = resp.candidates[0] if resp.candidates else None
