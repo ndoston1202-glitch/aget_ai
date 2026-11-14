@@ -189,6 +189,12 @@ TOOL_DEFS = [
         }, ["action", "times"]),
     },
     {
+        "name": "open_program",
+        "description": "Kompyuterda dastur yoki faylni ochadi: excel, word, powerpoint, notepad, calc, paint, "
+                       "chrome, edge, explorer, telegram yoki faylning to'liq yo'li.",
+        "input_schema": _schema({"name": {"type": "string"}}, ["name"]),
+    },
+    {
         "name": "close_program",
         "description": "Kompyuterdagi dasturni yopadi (masalan brauzerni). Foydalanuvchidan ruxsat so'raladi. "
                        "name - jarayon nomi: chrome, msedge, firefox, telegram, winword va hokazo.",
@@ -326,6 +332,25 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
                 ctypes.windll.user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
                 _t.sleep(0.05)
             return f"Bajarildi: {args['action']} ({times} marta)", False
+
+        if name == "open_program":
+            if platform.system() != "Windows":
+                return "Bu funksiya faqat Windows'da ishlaydi.", True
+            aliases = {"excel": "excel", "exel": "excel", "word": "winword", "doc": "winword", "docx": "winword",
+                       "powerpoint": "powerpnt", "ppt": "powerpnt", "notepad": "notepad", "bloknot": "notepad",
+                       "calc": "calc", "kalkulyator": "calc", "paint": "mspaint", "chrome": "chrome",
+                       "edge": "msedge", "explorer": "explorer", "papka": "explorer",
+                       "telegram": "telegram:", "settings": "ms-settings:", "sozlamalar": "ms-settings:"}
+            target = args["name"].strip().strip('"')
+            target = aliases.get(target.lower().removesuffix(".exe"), target)
+            if os.path.exists(os.path.expanduser(target)):
+                os.startfile(os.path.expanduser(target))
+            else:
+                r = subprocess.run(["cmd", "/c", "start", "", target], capture_output=True, text=True,
+                                   errors="replace", timeout=30)
+                if r.returncode != 0:
+                    return f"Ochib bo'lmadi: {(r.stderr or r.stdout).strip() or target}", True
+            return f"Ochildi: {target}", False
 
         if name == "close_program":
             proc = re.sub(r"[^A-Za-z0-9._-]", "", args["name"]).removesuffix(".exe")

@@ -4,6 +4,7 @@ Boshqa agentlar (Claude, Gemini) bilan bir xil ishlaydi: o'ylaydi -> amal bajara
 """
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -79,6 +80,19 @@ def candidate_models() -> list[str]:
     ordered += [m for m in have if ("llama" in m or "qwen" in m) and m not in ordered
                 and "guard" not in m and "whisper" not in m]
     return ordered or PREFERRED[:]
+
+
+def _retry_seconds(e) -> float:
+    """429 javobidan qancha kutish kerakligini aniqlaydi ("try again in 7.5s", "1m2s")."""
+    try:
+        return float(getattr(e, "retry_after", "") or "x")
+    except ValueError:
+        pass
+    m = re.search(r"try again in (?:(\d+)m)?([\d.]+)(ms|s)", str(getattr(e, "message", "")))
+    if not m:
+        return 10.0
+    secs = float(m.group(2)) / (1000 if m.group(3) == "ms" else 1)
+    return secs + 60 * int(m.group(1) or 0)
 
 
 def describe_error(e: Exception) -> str:
@@ -187,6 +201,7 @@ class GroqAgent:
             if models and self.model not in models:
                 self.model = models[0]
         tried = set()
+        waits = 0
         while True:
             body = {"model": self.model, "messages": messages, "temperature": 0.5,
                     "max_completion_tokens": 4096, **extra}
@@ -202,6 +217,13 @@ class GroqAgent:
             except Exception as e:
                 code = getattr(e, "code", None)
                 config.log_error(f"fail groq model={self.model} {time.time() - t:.1f}s: {e}")
+                if code == 429 and waits < 3:
+                    # Daqiqalik limit: Groq aytgan vaqt kutib, qayta urinamiz (odatda bir necha soniya)
+                    wait = _retry_seconds(e)
+                    if wait <= 25:
+                        waits += 1
+                        time.sleep(wait + 0.5)
+                        continue
                 msg = str(getattr(e, "message", "")).lower()
                 switchable = (code in (404, 500, 502, 503, 504) or "timed out" in str(e).lower()
                               or (code == 400 and ("decommission" in msg or "not found" in msg

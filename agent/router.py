@@ -11,7 +11,7 @@ from .tools import Human
 
 NAMES = {"groq": "Groq", "gemini": "Gemini", "claude": "Claude"}
 # Qancha vaqt chetga qo'yiladi (soniya)
-COOLDOWN = {"limit": 15 * 60, "auth": 24 * 3600, "unavailable": 5 * 60}
+COOLDOWN = {"limit": 60, "auth": 24 * 3600, "unavailable": 120}  # bepul limitlar odatda daqiqada tiklanadi
 REASON = {"limit": "limiti tugadi", "auth": "kaliti ishlamadi", "unavailable": "javob bermadi"}
 MAX_PAIRS = 30  # boshqa AI'ga o'tganda uzatiladigan suhbat (savol-javob juftlari)
 
@@ -58,10 +58,15 @@ class Router:
     def _order(self) -> list[str]:
         """Hozir ishlatsa bo'ladigan AI'lar: avval faoli, keyin tartib bo'yicha."""
         now = time.time()
-        ready = [p for p in config.configured_providers() if self.blocked_until.get(p, 0) <= now]
+        provs = config.configured_providers()
+        ready = [p for p in provs if self.blocked_until.get(p, 0) <= now]
         if self.active in ready:
             ready.remove(self.active)
             ready.insert(0, self.active)
+        if not ready:
+            # Hammasi chetga qo'yilgan - voz kechmaymiz: eng tez tiklanadiganini baribir sinaymiz
+            ready = sorted((p for p in provs if self.blocked_until.get(p, 0) - now < 24 * 3600),
+                           key=lambda p: self.blocked_until.get(p, 0))
         return ready
 
     def reset(self):
