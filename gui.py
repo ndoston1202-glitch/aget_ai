@@ -38,6 +38,8 @@ def save_settings(updates: dict) -> dict:
 
 def apply_settings(s: dict) -> bool:
     """Sozlamalarni muhit o'zgaruvchilariga yozadi. Kalit bo'lsa True."""
+    if s.get("gemini_model"):
+        config.GEMINI_MODEL = s["gemini_model"]  # "Tekshirish" topgan model
     if s.get("github_token"):
         os.environ["GITHUB_TOKEN"] = s["github_token"]
     else:
@@ -149,6 +151,7 @@ class App:
         menu.add_command(label="Telefon", command=self.show_phone)
         menu.add_command(label="Sozlamalar", command=self.open_settings)
         menu.add_command(label="Yangilash", command=lambda: self.check_update(manual=True))
+        menu.add_command(label="Tekshirish", command=self.run_diagnose)
         root.config(menu=menu)
 
         self.chat = scrolledtext.ScrolledText(root, wrap="word", state="disabled",
@@ -348,6 +351,37 @@ class App:
                     else:
                         self.write(text, tag)
         self.root.title(f"AI Agent ({config.provider()}) — v{updater.current_version()}")
+
+    # --- aloqani tekshirish ---
+    def run_diagnose(self):
+        if self.busy:
+            return
+        if config.provider() != "gemini":
+            messagebox.showinfo("Tekshirish", "Tekshirish hozircha faqat Gemini uchun.", parent=self.root)
+            return
+        self._set_busy(True)
+        self.write("🔎 Google Gemini bilan aloqa tekshirilmoqda (1-3 daqiqa)...", "event")
+
+        def work():
+            from agent.gemini_core import diagnose
+            try:
+                best = diagnose(on_line=lambda m: self.events.put(("event", m)))
+            except Exception as e:
+                config.log_error(f"diagnose: {type(e).__name__}: {e}")
+                best = None
+
+            def finish():
+                self._set_busy(False)
+                if best:
+                    save_settings({"gemini_model": best})
+                    config.GEMINI_MODEL = best
+                    if self.agent is not None and hasattr(self.agent, "model"):
+                        self.agent.model = best
+                    self.write(f"✅ Tayyor: endi \"{best}\" modeli ishlatiladi. Topshiriq yozishingiz mumkin.", "event")
+                else:
+                    self.write("❌ Ishlaydigan model topilmadi. Natijalarni Claude'ga yuboring.", "error")
+            self.events.put(("call", finish))
+        threading.Thread(target=work, daemon=True).start()
 
     # --- suhbat tarixi ---
     CURRENT_CHAT = property(lambda self: config.CHATS_DIR / "current.json")

@@ -38,13 +38,47 @@ def _is_user_text(c) -> bool:
     return c.role == "user" and any(p.text for p in (c.parts or []))
 
 
-def make_client(timeout_s: int = 120) -> genai.Client:
-    """Kutish chegarasi va vaqtinchalik xatolarda qayta urinish bilan Gemini mijozi."""
-    return genai.Client(http_options=types.HttpOptions(
-        timeout=timeout_s * 1000,
-        retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10,
-                                             http_status_codes=[500, 502, 503, 504]),
-    ))
+def make_client(timeout_s: int = 90) -> genai.Client:
+    """Kutish chegarasi bor Gemini mijozi (qayta urinishsiz - aks holda kutish uch barobar cho'ziladi)."""
+    return genai.Client(http_options=types.HttpOptions(timeout=timeout_s * 1000))
+
+
+def diagnose(on_line=lambda s: None) -> str | None:
+    """Kalit uchun ochiq Flash modellarni qisqa so'rov bilan sinaydi; eng birinchi ishlaganini qaytaradi."""
+    client = make_client(timeout_s=40)
+    t = time.time()
+    try:
+        models = [(m.name or "").removeprefix("models/") for m in client.models.list()]
+    except Exception as e:
+        on_line(f"❌ Modellar ro'yxatini olib bo'lmadi: {describe_error(e)}")
+        config.log_error(f"diagnose list: {type(e).__name__}: {e}")
+        return None
+    on_line(f"✅ Google bilan aloqa bor ({time.time() - t:.1f} s), {len(models)} ta model topildi.")
+
+    def version(name):
+        m = re.match(r"gemini-(\d+(?:\.\d+)?)", name)
+        return float(m.group(1)) if m else 0.0
+    flash = [n for n in models if re.fullmatch(r"gemini-[\d.]+-flash(-lite)?(-latest)?", n)]
+    flash += [n for n in ("gemini-flash-latest", "gemini-flash-lite-latest") if n in models]
+    flash = sorted(dict.fromkeys(flash), key=lambda n: (-version(n), "lite" in n))[:5]
+    if not flash:
+        on_line("❌ Flash modellar topilmadi. Mavjudlari: " + ", ".join(models[:15]))
+        return None
+    best = None
+    for name in flash:
+        t = time.time()
+        try:
+            r = client.models.generate_content(model=name, contents="Bitta so'z bilan javob ber: salom")
+            took = time.time() - t
+            on_line(f"✅ {name}: {took:.1f} s — \"{(r.text or '').strip()[:40]}\"")
+            config.log_error(f"diagnose ok {name} {took:.1f}s")
+            if best is None:
+                best = name
+        except Exception as e:
+            msg = "40 soniya ichida javob bermadi" if "Timeout" in type(e).__name__ else describe_error(e)
+            on_line(f"❌ {name}: {msg}")
+            config.log_error(f"diagnose {name}: {type(e).__name__}: {e}")
+    return best
 
 
 def describe_error(e: Exception) -> str:
@@ -58,8 +92,8 @@ def describe_error(e: Exception) -> str:
         return f"Gemini xatosi ({e.code}): {e.message}"
     name = type(e).__name__
     if "Timeout" in name:
-        return ("Google serveri 2 daqiqa ichida javob bermadi. Internetni tekshiring "
-                "(VPN yoqilgan bo'lsa, o'chirib yoki yoqib ko'ring) va qayta urinib ko'ring.")
+        return ("Google serveri belgilangan vaqtda javob bermadi. Yuqoridagi \"Tekshirish\" menyusini "
+                "bosing - dastur ishlaydigan modelni o'zi topadi.")
     if "Connect" in name or isinstance(e, OSError):
         return "Google serveriga ulanib bo'lmadi. Internet ulanishini tekshiring."
     return f"Kutilmagan xato: {name}: {e}"
@@ -77,6 +111,7 @@ class GeminiAgent:
     def _generate(self, **kw):
         """So'rov yuboradi; model eskirgan bo'lsa (404), mavjud eng yangisiga o'tib qayta urinadi."""
         t = time.time()
+        config.log_error(f"start model={self.model}")
         try:
             resp = self.client.models.generate_content(model=self.model, **kw)
             config.log_error(f"ok model={self.model} {time.time() - t:.1f}s")
