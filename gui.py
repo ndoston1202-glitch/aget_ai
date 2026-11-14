@@ -204,10 +204,12 @@ class App:
         btns = ctk.CTkFrame(top, fg_color="transparent")
         btns.pack(side="right", padx=12)
         for text, cmd in (("＋ Yangi suhbat", self.new_chat), ("Tarix", self.show_history),
-                          ("Sozlamalar", self.open_settings), ("⋯", self.show_more)):
-            ctk.CTkButton(btns, text=text, command=cmd, height=34, width=40 if text == "⋯" else 110,
-                          fg_color="transparent", hover_color=BORDER, text_color=TEXT,
-                          border_width=1, border_color=BORDER, font=(FONT, 13)).pack(side="left", padx=4)
+                          ("Sozlamalar", self.open_settings), ("⋯ Yana", self.show_more)):
+            b = ctk.CTkButton(btns, text=text, command=cmd, height=34, width=110,
+                              fg_color="transparent", hover_color=BORDER, text_color=TEXT,
+                              border_width=1, border_color=BORDER, font=(FONT, 13))
+            b.pack(side="left", padx=4)
+        self.more_btn = b
         self.more_menu = tk.Menu(root, tearoff=0)
         for label, cmd in (("Vazifalar", self.show_tasks), ("Xotira", self.show_memory),
                            ("Telefondan ulanish", self.show_phone), ("Ovozli fayl yuborish", self.send_voice_file),
@@ -273,7 +275,17 @@ class App:
                 pass
 
     def _scroll_end(self):
-        self.root.after(30, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+        """Chatni oxiriga aylantiradi (o'lcham hisoblangach - bir necha marta, ishonch uchun)."""
+        def go():
+            try:
+                self.chat.update_idletasks()
+                canvas = self.chat._parent_canvas
+                canvas.configure(scrollregion=canvas.bbox("all"))
+                canvas.yview_moveto(1.0)
+            except tk.TclError:
+                pass
+        for ms in (10, 120, 400):
+            self.root.after(ms, go)
 
     def _copy_menu(self, widget, text):
         def popup(e):
@@ -644,9 +656,12 @@ class App:
                           command=lambda f=f: show(f)).pack(fill="x", pady=1)
 
     def show_more(self):
-        x = self.root.winfo_rootx() + self.root.winfo_width() - 240
-        y = self.root.winfo_rooty() + 60
-        self.more_menu.tk_popup(x, y)
+        """"Yana" tugmasi ostida menyu ochadi."""
+        b = self.more_btn
+        try:
+            self.more_menu.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+        finally:
+            self.more_menu.grab_release()
 
     # ---------- aloqani tekshirish ----------
     def run_diagnose(self):
