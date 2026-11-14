@@ -45,6 +45,37 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+def all_ips() -> list[str]:
+    """Kompyuterning barcha IPv4 manzillari (asosiysi birinchi)."""
+    ips = [lan_ip()]
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in ips:
+                ips.append(ip)
+    except OSError:
+        pass
+    return [ip for ip in ips if not ip.startswith(("127.", "169.254."))] or ["127.0.0.1"]
+
+
+def allow_firewall() -> bool:
+    """Windows brandmauerida telefon ulanishiga ruxsat beradi (administrator ruxsati so'raladi)."""
+    import subprocess
+    import sys
+    if sys.platform != "win32":
+        return False
+    rule = (f"advfirewall firewall add rule name=\"AI Agent telefon\" dir=in action=allow "
+            f"protocol=TCP localport={PORT} profile=any")
+    exe = sys.executable.replace("'", "''")
+    rule2 = f"advfirewall firewall add rule name=\"AI Agent dastur\" dir=in action=allow program=\"{exe}\" profile=any"
+    ps = ("$r = Start-Process netsh -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList "
+          f"'{rule}'; if ($r.ExitCode -eq 0) {{ Start-Process netsh -Verb RunAs -Wait -WindowStyle Hidden "
+          f"-ArgumentList '{rule2}' }}; exit $r.ExitCode")
+    r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=120)
+    return r.returncode == 0
+
+
 class PhoneSession:
     """Telefondagi suhbat: alohida agent, voqealar ro'yxati va kutilayotgan savollar."""
 

@@ -142,7 +142,23 @@ def synthesize(text: str) -> Path:
     raise RuntimeError("Ovoz chiqarish faqat Windows'da ishlaydi")
 
 
+_speaking_until = 0.0
+_synthesizing = 0
+
+
+def is_speaking() -> bool:
+    """Agent hozir gapiryaptimi (yoki gapirishga tayyorlanyaptimi) - tinglash shu payt to'xtaydi."""
+    return _synthesizing > 0 or time.time() < _speaking_until
+
+
 def play(path: Path) -> None:
+    global _speaking_until
+    try:
+        with wave.open(str(path)) as w:
+            seconds = w.getnframes() / float(w.getframerate() or 1)
+    except (wave.Error, OSError):
+        seconds = 5.0
+    _speaking_until = time.time() + seconds + 0.4
     if IS_WIN:
         import winsound
         with _play_lock:
@@ -150,6 +166,8 @@ def play(path: Path) -> None:
 
 
 def stop_speaking() -> None:
+    global _speaking_until
+    _speaking_until = 0.0
     if IS_WIN:
         import winsound
         with _play_lock:
@@ -158,7 +176,13 @@ def stop_speaking() -> None:
 
 def speak(text: str) -> None:
     """Matnni ovozga aylantirib, fonda ijro etadi (kutib turmaydi)."""
-    play(synthesize(text))
+    global _synthesizing
+    _synthesizing += 1
+    try:
+        path = synthesize(text)
+    finally:
+        _synthesizing -= 1
+    play(path)
 
 
 def speak_async(text: str, on_error=lambda e: None) -> None:

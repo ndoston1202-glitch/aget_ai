@@ -258,6 +258,10 @@ class App:
         self.stop_btn = ctk.CTkButton(status_row, text="⏹ To'xtatish", width=100, height=26,
                                       fg_color="transparent", border_width=1, border_color=BORDER,
                                       text_color=TEXT, hover_color=BORDER, command=self.cancel)
+        self.listener = None
+        self.hands_free_var = ctk.BooleanVar(value=load_settings().get("hands_free", False))
+        ctk.CTkSwitch(status_row, text="👂 Doim tinglash", variable=self.hands_free_var, font=(FONT, 12),
+                      command=self._hands_free_toggled).pack(side="right", padx=(16, 0))
         self.voice_var = ctk.BooleanVar(value=load_settings().get("voice_reply", True))
         ctk.CTkSwitch(status_row, text="🔊 Ovozli javob", variable=self.voice_var, font=(FONT, 12),
                       command=self._voice_toggled).pack(side="right")
@@ -272,13 +276,19 @@ class App:
 
     # ---------- chat pufakchalari ----------
     def _wrap_width(self) -> int:
-        return max(260, int(self.chat.winfo_width() * 0.68))
+        """Pufakcha kengligi. winfo_width haqiqiy piksel beradi, CTk esa wraplength'ni ekran
+        masshtabiga (125%, 150%) yana ko'paytiradi - shuning uchun masshtabga bo'lamiz."""
+        try:
+            scale = self.chat._get_widget_scaling() or 1.0
+        except Exception:
+            scale = 1.0
+        return max(240, int(self.chat.winfo_width() / scale * 0.62))
 
     def _rewrap(self):
         w = self._wrap_width()
         for lbl, kind in self.bubbles:
             try:
-                lbl.configure(wraplength=w if kind in ("user", "agent", "error") else w + 120)
+                lbl.configure(wraplength=w if kind in ("user", "agent", "error") else int(w * 1.3))
             except tk.TclError:
                 pass
 
@@ -332,7 +342,7 @@ class App:
                               command=lambda t=text: self.speak(t)).pack(anchor="w", padx=6)
         else:  # event / task
             lbl = ctk.CTkLabel(holder, text=text, text_color=TASK if tag == "task" else MUTED,
-                               font=(FONT, 12), justify="left", wraplength=w + 120)
+                               font=(FONT, 12), justify="left", wraplength=int(w * 1.3))
             lbl.pack(side="left", padx=6)
         self._copy_menu(lbl, text)
         self.bubbles.append((lbl, tag))
@@ -381,6 +391,8 @@ class App:
                         from agent import voice
                         if self.voice_on() and not voice.spoke_during_run:
                             self.speak(ans)
+                        if self.listener:
+                            self.listener.allow_follow_up()
                 elif kind == "event" and data.startswith("🖼 "):
                     self.show_image(data[2:].strip())
                 else:
@@ -431,6 +443,60 @@ class App:
         save_settings({"voice_reply": self.voice_on()})
         if not self.voice_on():
             self.stop_speaking()
+
+    # ---------- doimiy tinglash ----------
+    def _hands_free_toggled(self):
+        on = bool(self.hands_free_var.get())
+        save_settings({"hands_free": on})
+        if on:
+            self._start_listener()
+        else:
+            self._stop_listener()
+
+    def _start_listener(self):
+        from agent.listener import HandsFree
+        if self.listener:
+            return
+        self.listener = HandsFree(
+            on_command=lambda t: self.events.put(("call", lambda: self._voice_command(t))),
+            on_status=lambda st: self.events.put(("call", lambda: self._listener_status(st))),
+            is_muted=self._listener_muted)
+        self.listener.start()
+        self.write("👂 Doim tinglash yoqildi. \"Agent, ...\" deb gapiring, masalan: \"Agent, musiqa qo'y\".",
+                   "event", record=False)
+
+    def _stop_listener(self):
+        if self.listener:
+            self.listener.stop()
+            self.listener = None
+
+    def _listener_muted(self) -> bool:
+        from agent import voice
+        return self.busy or self.recording or self.updating or voice.is_speaking()
+
+    def _listener_status(self, st: str):
+        if st.startswith("error:"):
+            self.write(st[6:], "error", record=False)
+            self.hands_free_var.set(False)
+            self.listener = None
+            save_settings({"hands_free": False})
+        elif st == "follow" and not self.busy:
+            self.status.configure(text="👂 Eshitayapman — davom etishingiz mumkin")
+            self.root.after(10000, lambda: (not self.busy) and self.status.configure(text=""))
+
+    def _voice_command(self, text: str):
+        if self.busy:
+            return
+        if not text:  # faqat "Agent" deyildi
+            self.write("Labbay?", "agent", record=False)
+            if self.voice_on():
+                self.speak("Labbay?")
+            if self.listener:
+                self.listener.allow_follow_up()
+            return
+        self.entry.delete(0, "end")
+        self.entry.insert(0, text)
+        self.send()
 
     def speak(self, text: str):
         from agent import voice
@@ -515,6 +581,8 @@ class App:
                 self.write("Kalit kiritilmadi. Yuqoridagi \"Sozlamalar\" tugmasidan kiriting.", "error")
                 return
         self._create_agent()
+        if self.hands_free_var.get():
+            self._start_listener()
         if self.display:
             self.write("— Oldingi suhbat davom etmoqda —", "event", record=False)
             greet = "Xush kelibsiz! Davom etamizmi yoki yangi ish bormi?"
@@ -723,27 +791,54 @@ class App:
             config.log_error(f"phone server: {e}")
 
     def show_phone(self):
-        win = self._toplevel("Telefondan ulanish", "520x400")
-        f = ctk.CTkFrame(win, fg_color="transparent")
-        f.pack(fill="both", expand=True, padx=24, pady=20)
+        win = self._toplevel("Telefondan ulanish", "560x640")
+        f = ctk.CTkScrollableFrame(win, fg_color="transparent")
+        f.pack(fill="both", expand=True, padx=16, pady=12)
         if not self.phone_server:
             ctk.CTkLabel(f, text="Telefon serveri ishlamayapti. Dasturni qayta oching.").pack()
             return
-        addr = f"{server.lan_ip()}:{server.PORT}"
+        ips = server.all_ips()
         ctk.CTkLabel(f, text="Telefondan ulanish", font=(FONT, 20, "bold")).pack(anchor="w")
-        ctk.CTkLabel(f, text="Telefonga AI Agent ilovasini o'rnating va bitta Wi-Fi'ga ulaning.\n"
-                             "Keyin ilovaga quyidagilarni kiriting:", justify="left",
-                     text_color=MUTED).pack(anchor="w", pady=(6, 12))
-        for label, value in (("Manzil", addr), ("Kod", server.get_token())):
-            ctk.CTkLabel(f, text=label, font=(FONT, 13, "bold")).pack(anchor="w")
-            e = ctk.CTkEntry(f, font=(FONT, 20, "bold"), height=44)
-            e.insert(0, value)
+        ctk.CTkLabel(f, text="1. Telefon va kompyuter bitta Wi-Fi'da bo'lsin.\n"
+                             "2. Avval pastdagi \"Telefonga ruxsat berish\" tugmasini bosing (bir marta).\n"
+                             "3. Telefondagi AI Agent ilovasiga manzil va kodni kiriting.",
+                     justify="left", text_color=MUTED).pack(anchor="w", pady=(6, 10))
+        ctk.CTkLabel(f, text="Manzil" + (" (ishlamasa, keyingisini sinang)" if len(ips) > 1 else ""),
+                     font=(FONT, 13, "bold")).pack(anchor="w")
+        for ip in ips:
+            e = ctk.CTkEntry(f, font=(FONT, 18, "bold"), height=40)
+            e.insert(0, f"{ip}:{server.PORT}")
             e.configure(state="readonly")
-            e.pack(fill="x", pady=(2, 10))
+            e.pack(fill="x", pady=2)
+        ctk.CTkLabel(f, text="Kod", font=(FONT, 13, "bold")).pack(anchor="w", pady=(8, 0))
+        e = ctk.CTkEntry(f, font=(FONT, 18, "bold"), height=40)
+        e.insert(0, server.get_token())
+        e.configure(state="readonly")
+        e.pack(fill="x", pady=2)
+
+        result = ctk.CTkLabel(f, text="", text_color=MUTED, justify="left", wraplength=480)
+
+        def allow():
+            result.configure(text="Windows ruxsat so'raydi - \"Да\" ni bosing...")
+
+            def work():
+                ok = False
+                try:
+                    ok = server.allow_firewall()
+                except Exception as ex:
+                    config.log_error(f"firewall: {ex}")
+                msg = ("✅ Ruxsat berildi. Endi telefondan ulanib ko'ring." if ok else
+                       "❌ Ruxsat berilmadi. Tugmani qayta bosib, chiqqan oynada \"Да\" ni tanlang.")
+                self.events.put(("call", lambda: result.configure(text=msg)))
+            threading.Thread(target=work, daemon=True).start()
+        ctk.CTkButton(f, text="🛡 Telefonga ruxsat berish (brandmauer)", height=40, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER, command=allow).pack(fill="x", pady=(14, 4))
+        result.pack(anchor="w")
+        ctk.CTkLabel(f, text="Tekshirish: telefonning Chrome brauzerida http://" + f"{ips[0]}:{server.PORT}"
+                             " ni oching. Sahifa ochilsa - aloqa bor.",
+                     text_color=MUTED, font=(FONT, 12), wraplength=480, justify="left").pack(anchor="w", pady=(10, 0))
         link_label(f, "APK ni yuklab olish",
-                   "https://github.com/ndoston1202-glitch/aget_ai/releases/download/latest/aget_ai.apk").pack(anchor="w")
-        ctk.CTkLabel(f, text="Windows \"Брандмауэр\" so'rasa - \"Разрешить доступ\" ni bosing.",
-                     text_color=MUTED, font=(FONT, 12)).pack(anchor="w", pady=(6, 0))
+                   "https://github.com/ndoston1202-glitch/aget_ai/releases/download/latest/aget_ai.apk").pack(anchor="w", pady=(6, 0))
 
     # ---------- yangilanish ----------
     def _auto_update_loop(self):
@@ -899,6 +994,8 @@ def selftest() -> int:
     import agent.core  # noqa: F401
     import agent.gemini_core  # noqa: F401
     import agent.voice  # noqa: F401
+    import agent.listener  # noqa: F401
+    import sounddevice  # noqa: F401 - PortAudio DLL .exe ichida borligini tekshiradi
     import PIL.ImageTk  # noqa: F401
     return 0 if updater.BUILD_SHA != "dev" else 3
 

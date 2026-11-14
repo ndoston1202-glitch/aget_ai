@@ -168,6 +168,23 @@ TOOL_DEFS = [
         "input_schema": _schema({"url": {"type": "string"}}, ["url"]),
     },
     {
+        "name": "media_control",
+        "description": "Kompyuterdagi musiqa/videoni boshqaradi (klaviaturaning media tugmalari kabi): "
+                       "play_pause - to'xtatish yoki davom ettirish, next - keyingi, previous - oldingi, "
+                       "volume_up / volume_down - ovozni balandlatish/pasaytirish, mute - ovozni o'chirish/yoqish.",
+        "input_schema": _schema({
+            "action": {"type": "string",
+                       "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]},
+            "times": {"type": "integer", "description": "Necha marta bosish (ovoz uchun, masalan 5)"},
+        }, ["action", "times"]),
+    },
+    {
+        "name": "close_program",
+        "description": "Kompyuterdagi dasturni yopadi (masalan brauzerni). Foydalanuvchidan ruxsat so'raladi. "
+                       "name - jarayon nomi: chrome, msedge, firefox, telegram, winword va hokazo.",
+        "input_schema": _schema({"name": {"type": "string"}}, ["name"]),
+    },
+    {
         "name": "speak_text",
         "description": "Berilgan matnni ovoz chiqarib o'qib beradi. Foydalanuvchi biror matnni (masalan tarjimani) "
                        "o'qib berishni so'raganda ishlat.",
@@ -286,6 +303,31 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
                 url = "https://" + url
             webbrowser.open(url)
             return f"Brauzerda ochildi: {url}", False
+
+        if name == "media_control":
+            if platform.system() != "Windows":
+                return "Bu funksiya faqat Windows'da ishlaydi.", True
+            import ctypes
+            import time as _t
+            vk = {"play_pause": 0xB3, "next": 0xB0, "previous": 0xB1,
+                  "volume_up": 0xAF, "volume_down": 0xAE, "mute": 0xAD}[args["action"]]
+            times = max(1, min(int(args.get("times") or 1), 25))
+            for _ in range(times):
+                ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
+                _t.sleep(0.05)
+            return f"Bajarildi: {args['action']} ({times} marta)", False
+
+        if name == "close_program":
+            proc = re.sub(r"[^A-Za-z0-9._-]", "", args["name"]).removesuffix(".exe")
+            if not proc:
+                return "Dastur nomi noto'g'ri.", True
+            if not human.approve(f"  Dasturni yopish: {proc}.exe"):
+                return "Foydalanuvchi ruxsat bermadi.", True
+            r = subprocess.run(["taskkill", "/IM", f"{proc}.exe"], capture_output=True, text=True,
+                               errors="replace", timeout=30)
+            ok = r.returncode == 0
+            return (f"{proc} yopildi." if ok else f"Yopib bo'lmadi: {(r.stderr or r.stdout).strip()}"), not ok
 
         if name == "speak_text":
             from . import voice

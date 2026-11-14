@@ -33,6 +33,8 @@ jobs:
           --collect-submodules agent
           --collect-submodules google.genai
           --collect-data customtkinter
+          --collect-all sounddevice
+          --collect-all _sounddevice_data
           gui.py
 
       - name: .exe ishga tushishini tekshirish
