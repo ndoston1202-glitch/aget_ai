@@ -23,8 +23,21 @@ Claude (Anthropic API) asosida ishlaydi.
    (bepul kalit: https://aistudio.google.com/apikey).
 4. Pastdagi maydonga topshiriq yozib, **Yuborish** ni bosing.
 
-Ma'lumotlar (xotira, vazifalar, kalit) `C:\Users\<siz>\aget_ai` papkasida saqlanadi.
-Dastur yopilsa, takrorlanuvchi vazifalar ham to'xtaydi.
+Birinchi ochilishda dastur **o'rnatishni taklif qiladi**: rozi bo'lsangiz `C:\AI Agent` papkasiga
+joylashadi, Ish stoli va Пуск menyusida "AI Agent" yorlig'i paydo bo'ladi. Yangi versiya chiqsa,
+dastur ichidan so'raydi va yangilangach o'zi qayta ochiladi.
+
+`C:\AI Agent` ichida:
+
+| Papka | Nima saqlanadi |
+|---|---|
+| `data\chats` | Har bir suhbat (qayta ochilganda davom etadi, eskilari "Tarix" menyusida) |
+| `data` | Xotira, sozlamalar, vazifalar, loglar |
+| `projekt\<loyiha nomi>` | Agent yaratgan dasturlash loyihalari (GitHub'ga yuklanmaganlari ham) |
+| `workspace` | Boshqa fayllar, rasmlar, ovozli xabarlar |
+
+Dasturlash loyihasi yaratishdan oldin agent "GitHub'da repo ochaymi?" deb so'raydi. Buning uchun
+Sozlamalarda GitHub tokenini kiriting. Dastur yopilsa, takrorlanuvchi vazifalar ham to'xtaydi.
 
 ## Dasturchilar uchun: Python orqali o'rnatish
 

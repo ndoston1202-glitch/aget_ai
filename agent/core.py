@@ -15,7 +15,11 @@ Ish tartibi:
 boshqa yo'l taklif qil yoki to'xta.
 4. Foydalanuvchi takrorlanuvchi ish so'rasa (masalan "har kuni", "har soatda"), schedule_task bilan vazifa yarat.
 5. Foydalanuvchi o'zi yoki ish uslubi haqida doimiy narsa aytsa, remember bilan saqla.
-6. Oxirida qisqa hisobot ber: nima qilindi, natija qanday, nima qoldi.
+6. Dasturlash loyihasi (kod, sayt, bot, skript va hokazo) yaratishdan oldin ask_user bilan so'ra: \
+"Loyihani GitHub'da repo ochib yuklaymi?". Har ikki holatda ham fayllarni project_folder papkasiga yoz. \
+Foydalanuvchi "ha" desa, ishni tugatgach github_create_repo bilan yukla (GitHub tokeni kiritilmagan bo'lsa, \
+Sozlamalardan kiritishni so'ra). "Yo'q" desa, loyiha papkada qoladi - uning yo'lini ayt.
+7. Oxirida qisqa hisobot ber: nima qilindi, natija qanday, nima qoldi.
 
 Foydalanuvchi bilan o'zbek tilida, qisqa va aniq gaplash. Bajarmagan ishingni bajardim dema."""
 
@@ -28,6 +32,27 @@ class Agent:
 
     def reset(self):
         self.messages = []
+
+    MAX_SAVED = 80
+
+    def export_state(self) -> list:
+        """Suhbatni diskka saqlash uchun JSON ko'rinishiga o'tkazadi."""
+        out = []
+        for m in self.messages:
+            content = m["content"]
+            if not isinstance(content, str):
+                content = [b.model_dump(mode="json", exclude_none=True) if hasattr(b, "model_dump") else b
+                           for b in content]
+            out.append({"role": m["role"], "content": content})
+        if len(out) > self.MAX_SAVED:
+            start = len(out) - self.MAX_SAVED
+            while start < len(out) and not (out[start]["role"] == "user" and isinstance(out[start]["content"], str)):
+                start += 1
+            out = out[start:]
+        return out
+
+    def load_state(self, data: list) -> None:
+        self.messages = list(data)
 
     def _system(self) -> list[dict]:
         return [

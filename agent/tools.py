@@ -2,6 +2,7 @@
 
 Xavfli amallar (buyruq ishga tushirish, fayl yozish) foydalanuvchi ruxsatisiz bajarilmaydi.
 """
+import os
 import platform
 import re
 import subprocess
@@ -52,7 +53,10 @@ def system_context() -> str:
     shell = "cmd (Windows)" if platform.system() == "Windows" else "bash"
     return (f"Bugungi sana: {datetime.now():%Y-%m-%d %H:%M}\n"
             f"Operatsion tizim: {platform.system()} {platform.release()}, run_shell buyruqlari {shell} da bajariladi\n"
-            f"Workspace papka: {config.WORKSPACE_DIR}\n\n{memory.as_prompt()}")
+            f"Workspace papka: {config.WORKSPACE_DIR}\n"
+            f"Loyihalar papkasi: {config.PROJECTS_DIR}\n"
+            f"GitHub tokeni: {'kiritilgan' if os.environ.get('GITHUB_TOKEN') else 'kiritilmagan'}\n\n"
+            f"{memory.as_prompt()}")
 
 
 def _resolve(path: str) -> Path:
@@ -136,6 +140,23 @@ TOOL_DEFS = [
         "input_schema": _schema({"path": {"type": "string"}}, ["path"]),
     },
     {
+        "name": "project_folder",
+        "description": "Dasturlash loyihasi uchun papka yaratadi (projekt/<nom>) va yo'lini qaytaradi. "
+                       "Loyiha fayllarini shu papkaga yoz.",
+        "input_schema": _schema({"name": {"type": "string", "description": "Loyiha nomi"}}, ["name"]),
+    },
+    {
+        "name": "github_create_repo",
+        "description": "GitHub'da yangi repozitoriy ochib, loyiha papkasidagi fayllarni unga yuklaydi. "
+                       "Faqat foydalanuvchi GitHub'ga yuklashga rozi bo'lgandan keyin ishlat.",
+        "input_schema": _schema({
+            "name": {"type": "string"},
+            "folder": {"type": "string", "description": "project_folder qaytargan papka"},
+            "description": {"type": "string"},
+            "private": {"type": "boolean", "description": "true - yopiq repo (sukut bo'yicha)"},
+        }, ["name", "folder", "description", "private"]),
+    },
+    {
         "name": "list_scheduled_tasks",
         "description": "Barcha takrorlanuvchi vazifalar ro'yxati.",
         "input_schema": _schema({}, []),
@@ -208,6 +229,18 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
         if name == "transcribe_audio":
             from .media import transcribe
             return transcribe(_resolve(args["path"])), False
+
+        if name == "project_folder":
+            from .projects import project_folder
+            return f"Loyiha papkasi: {project_folder(args['name'])}", False
+
+        if name == "github_create_repo":
+            from .projects import create_repo
+            vis = "yopiq (private)" if args.get("private", True) else "ochiq (public)"
+            if not human.approve(f"  GitHub'da {vis} repo ochish: {args['name']}\n  Papka: {args['folder']}"):
+                return "Foydalanuvchi GitHub'ga yuklashga ruxsat bermadi.", True
+            return create_repo(args["name"], args["folder"], args.get("description", ""),
+                               args.get("private", True)), False
 
         if name == "ask_user":
             return human.ask(args["question"]), False

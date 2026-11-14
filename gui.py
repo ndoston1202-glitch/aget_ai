@@ -28,8 +28,20 @@ def load_settings() -> dict:
         return {}
 
 
+def save_settings(updates: dict) -> dict:
+    """Sozlamalarni mavjudlari ustiga qo'shib saqlaydi (telefon kodi va boshqalar yo'qolmaydi)."""
+    s = load_settings()
+    s.update(updates)
+    config.SETTINGS_FILE.write_text(json.dumps(s), encoding="utf-8")
+    return s
+
+
 def apply_settings(s: dict) -> bool:
     """Sozlamalarni muhit o'zgaruvchilariga yozadi. Kalit bo'lsa True."""
+    if s.get("github_token"):
+        os.environ["GITHUB_TOKEN"] = s["github_token"]
+    else:
+        os.environ.pop("GITHUB_TOKEN", None)
     prov = s.get("provider", "gemini")
     key = s.get("api_key", "").strip()
     if not key:
@@ -67,15 +79,25 @@ class SettingsDialog(tk.Toplevel):
         link.grid(row=5, column=0, sticky="w", pady=(4, 0))
         link.bind("<Button-1>", lambda e: webbrowser.open(KEY_URLS[self.prov.get()]))
 
-        ttk.Button(frm, text="Saqlash", command=self._save).grid(row=6, column=0, sticky="e", pady=(16, 0))
+        ttk.Label(frm, text="GitHub tokeni (ixtiyoriy, loyihalarni GitHub'ga yuklash uchun):").grid(
+            row=6, column=0, sticky="w", pady=(16, 0))
+        self.gh = tk.StringVar(value=current.get("github_token", ""))
+        ttk.Entry(frm, textvariable=self.gh, width=60, show="•").grid(row=7, column=0, sticky="we")
+        gh_link = ttk.Label(frm, text="GitHub tokenini olish (bosing, 'repo' belgilangan bo'lsin)",
+                            foreground="blue", cursor="hand2")
+        gh_link.grid(row=8, column=0, sticky="w", pady=(4, 0))
+        gh_link.bind("<Button-1>", lambda e: webbrowser.open(
+            "https://github.com/settings/tokens/new?scopes=repo&description=AI%20Agent"))
+
+        ttk.Button(frm, text="Saqlash", command=self._save).grid(row=9, column=0, sticky="e", pady=(16, 0))
         self.bind("<Return>", lambda e: self._save())
 
     def _save(self):
         if not self.key.get().strip():
             messagebox.showwarning("Kalit kerak", "API kalitini kiriting.", parent=self)
             return
-        self.result = {"provider": self.prov.get(), "api_key": self.key.get().strip()}
-        config.SETTINGS_FILE.write_text(json.dumps(self.result), encoding="utf-8")
+        self.result = save_settings({"provider": self.prov.get(), "api_key": self.key.get().strip(),
+                                     "github_token": self.gh.get().strip()})
         self.destroy()
 
 
@@ -113,13 +135,15 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.agent = None
         self.busy = False
-        root.title("aget_ai — shaxsiy AI agent")
+        root.title("AI Agent")
+        self.display: list = []  # ekrandagi suhbat (saqlash uchun)
         self.updating = False
         self.phone_server = None
         root.geometry("820x600")
 
         menu = tk.Menu(root)
         menu.add_command(label="Yangi suhbat", command=self.new_chat)
+        menu.add_command(label="Tarix", command=self.show_history)
         menu.add_command(label="Vazifalar", command=self.show_tasks)
         menu.add_command(label="Xotira", command=self.show_memory)
         menu.add_command(label="Telefon", command=self.show_phone)
@@ -156,7 +180,9 @@ class App:
         root.after(200, self._startup)
 
     # --- yordamchi ---
-    def write(self, text: str, tag: str = "agent"):
+    def write(self, text: str, tag: str = "agent", record: bool = True):
+        if record:
+            self.display.append([tag, text])
         self.chat.config(state="normal")
         self.chat.insert("end", text + "\n\n", tag)
         self.chat.config(state="disabled")
@@ -173,6 +199,7 @@ class App:
                     if run_id == self.run_id:  # to'xtatilgan ishning javobi e'tiborga olinmaydi
                         self.write(f"🤖 {ans}", "agent")
                         self._set_busy(False)
+                        self.save_chat()
                 elif kind == "event" and data.startswith("🖼 "):
                     self.show_image(data[2:].strip())
                 else:
@@ -181,7 +208,9 @@ class App:
             pass
         self.root.after(100, self._poll)
 
-    def show_image(self, path: str):
+    def show_image(self, path: str, record: bool = True):
+        if record:
+            self.display.append(["image", path])
         try:
             img = tk.PhotoImage(file=path)
             factor = max(1, img.width() // 420 + (1 if img.width() % 420 else 0))
@@ -194,7 +223,7 @@ class App:
             self.chat.config(state="disabled")
             self.chat.see("end")
         except Exception:
-            self.write(f"🖼 Rasm saqlandi: {path}", "event")
+            self.write(f"🖼 Rasm saqlandi: {path}", "event", record=False)
 
     def send_voice_file(self):
         if self.busy:
@@ -256,11 +285,14 @@ class App:
             return
         self.run_id += 1
         self._set_busy(False)
-        self._create_agent()
-        self.write("⏹ To'xtatildi. Yangi suhbat boshlandi, topshiriqni qayta yozishingiz mumkin.", "event")
+        self._create_agent()  # oxirgi saqlangan holatdan davom etadi
+        self.write("⏹ To'xtatildi. Topshiriqni qayta yozishingiz mumkin.", "event")
+        self.save_chat()
 
     # --- ishga tushish ---
     def _startup(self):
+        if self._offer_install():
+            return
         scheduler.Scheduler(self.run_scheduled).start()
         self._auto_update_loop()
         self._start_phone_server()
@@ -270,14 +302,113 @@ class App:
                 self.write("Kalit kiritilmadi. Yuqoridagi \"Sozlamalar\" menyusidan kiriting.", "error")
                 return
         self._create_agent()
-        self.write("Tayyor! Topshiriq yozing. Masalan: \"workspace papkasida eslatma.txt yarat\" "
-                   "yoki \"har 60 daqiqada dollar kursini topib menga xabar ber\".", "event")
+        if self.display:
+            self.write("— Oldingi suhbat davom etmoqda. Yangisini boshlash uchun \"Yangi suhbat\" ni bosing —",
+                       "event", record=False)
+        else:
+            self.write("Tayyor! Topshiriq yozing. Masalan: \"eslatma.txt fayl yarat\" "
+                       "yoki \"har 60 daqiqada dollar kursini topib menga xabar ber\".", "event")
         self.entry.focus()
 
+    def _offer_install(self) -> bool:
+        """Birinchi ishga tushishda C:\\AI Agent ga o'rnatishni taklif qiladi. O'rnatilsa True."""
+        from agent import installer
+        if not installer.can_install() or load_settings().get("install_declined"):
+            return False
+        if not messagebox.askyesno(
+                "AI Agent ni o'rnatish",
+                f"AI Agent kompyuteringizga o'rnatilsinmi?\n\n"
+                f"• Dastur {config.INSTALL_DIR} papkasiga joylashadi\n"
+                f"• Ish stoli va Пуск menyusida \"AI Agent\" yorlig'i paydo bo'ladi\n"
+                f"• Suhbatlar, xotira va loyihalar shu papkada saqlanadi\n\n"
+                f"\"Нет\" desangiz, dastur o'rnatilmasdan shu joydan ishlayveradi.", parent=self.root):
+            save_settings({"install_declined": True})
+            return False
+        try:
+            installer.install()
+        except Exception as e:
+            config.log_error(f"install: {type(e).__name__}: {e}")
+            messagebox.showerror("O'rnatish", f"O'rnatib bo'lmadi: {e}", parent=self.root)
+            return False
+        messagebox.showinfo("O'rnatildi", f"AI Agent {config.INSTALL_DIR} ga o'rnatildi va hozir ochiladi.\n"
+                            "Keyingi safar Ish stolidagi \"AI Agent\" yorlig'idan oching.", parent=self.root)
+        os._exit(0)
+
     def _create_agent(self):
+        """Agent yaratadi va saqlangan suhbatni (agar shu AI xizmatiniki bo'lsa) yuklaydi."""
         from agent.core import make_agent
         self.agent = make_agent(GuiHuman(self))
-        self.root.title(f"aget_ai — shaxsiy AI agent ({config.provider()}) — v{updater.current_version()}")
+        saved = self._load_chat_file()
+        if saved and saved.get("provider") == config.provider():
+            self.agent.load_state(saved.get("state", []))
+            if not self.display:
+                for tag, text in saved.get("display", []):
+                    if tag == "image":
+                        self.show_image(text)
+                    else:
+                        self.write(text, tag)
+        self.root.title(f"AI Agent ({config.provider()}) — v{updater.current_version()}")
+
+    # --- suhbat tarixi ---
+    CURRENT_CHAT = property(lambda self: config.CHATS_DIR / "current.json")
+
+    def _load_chat_file(self):
+        try:
+            return json.loads(self.CURRENT_CHAT.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def save_chat(self):
+        """Joriy suhbatni diskka yozadi (har javobdan keyin)."""
+        if self.agent is None:
+            return
+        try:
+            data = {"provider": config.provider(), "updated": time.strftime("%Y-%m-%d %H:%M"),
+                    "display": self.display[-400:], "state": self.agent.export_state()}
+            tmp = self.CURRENT_CHAT.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.CURRENT_CHAT)
+        except Exception as e:
+            config.log_error(f"save_chat: {type(e).__name__}: {e}")
+
+    def _archive_chat(self):
+        if self.CURRENT_CHAT.exists() and any(t == "user" for t, _ in self.display):
+            self.CURRENT_CHAT.replace(config.CHATS_DIR / f"suhbat_{time.strftime('%Y-%m-%d_%H-%M-%S')}.json")
+        else:
+            self.CURRENT_CHAT.unlink(missing_ok=True)
+
+    def show_history(self):
+        win = tk.Toplevel(self.root)
+        win.title("Suhbatlar tarixi")
+        win.geometry("760x480")
+        files = sorted(config.CHATS_DIR.glob("suhbat_*.json"), reverse=True)
+        pane = ttk.PanedWindow(win, orient="horizontal")
+        pane.pack(fill="both", expand=True)
+        lb = tk.Listbox(pane, width=26)
+        txt = scrolledtext.ScrolledText(pane, wrap="word", state="disabled")
+        pane.add(lb, weight=1)
+        pane.add(txt, weight=3)
+        if not files:
+            lb.insert("end", "Hali eski suhbatlar yo'q")
+        for f in files:
+            lb.insert("end", f.stem.removeprefix("suhbat_").replace("_", "  "))
+
+        def show(_e=None):
+            sel = lb.curselection()
+            if not sel or not files:
+                return
+            try:
+                data = json.loads(files[sel[0]].read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return
+            txt.config(state="normal")
+            txt.delete("1.0", "end")
+            for tag, text in data.get("display", []):
+                txt.insert("end", (f"[rasm] {text}" if tag == "image" else text) + "\n\n")
+            txt.config(state="disabled")
+        lb.bind("<<ListboxSelect>>", show)
+        ttk.Label(win, text=f"Suhbatlar shu yerda saqlanadi: {config.CHATS_DIR}", foreground="#666").pack(
+            anchor="w", padx=8, pady=4)
 
     # --- telefon ---
     def _start_phone_server(self):
@@ -384,9 +515,10 @@ class App:
         dlg = SettingsDialog(self.root, load_settings())
         self.root.wait_window(dlg)
         if dlg.result and apply_settings(dlg.result):
-            if self.agent is not None:
+            if self.agent is not None and not self.busy:
+                self.save_chat()
                 self._create_agent()
-                self.write("Sozlamalar saqlandi, yangi suhbat boshlandi.", "event")
+                self.write("Sozlamalar saqlandi.", "event", record=False)
             return True
         return False
 
@@ -429,11 +561,14 @@ class App:
 
     def new_chat(self):
         if self.agent and not self.busy:
+            self.save_chat()
+            self._archive_chat()
             self.agent.reset()
+            self.display = []
             self.chat.config(state="normal")
             self.chat.delete("1.0", "end")
             self.chat.config(state="disabled")
-            self.write("Yangi suhbat boshlandi.", "event")
+            self.write("Yangi suhbat boshlandi. Oldingisi \"Tarix\" menyusida saqlandi.", "event", record=False)
 
     def show_memory(self):
         win = tk.Toplevel(self.root)
@@ -483,9 +618,13 @@ if __name__ == "__main__":
         sys.exit(selftest())
     if "--spawn-test" in sys.argv:  # CI: qayta ishga tushish sinovi
         updater.spawn_self_test(sys.argv[sys.argv.index("--spawn-test") + 1])
+    if "--install-silent" in sys.argv:  # CI: o'rnatish sinovi
+        from agent import installer
+        installer.install(sys.argv[sys.argv.index("--install-silent") + 1:])
+        sys.exit(0)
     if "--write-marker" in sys.argv:
         with open(sys.argv[sys.argv.index("--write-marker") + 1], "w") as f:
-            f.write("ok")
+            f.write(f"{config.is_installed()}|{config.BASE_DIR}")
         sys.exit(0)
     root = tk.Tk()
     App(root)

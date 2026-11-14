@@ -50,6 +50,22 @@ jobs:
           if (-not (Test-Path $marker)) { throw "Qayta ishga tushgan nusxa ishlamadi" }
           Write-Host "Qayta ishga tushish ishladi"
 
+      - name: O'rnatish sinovi (C:\AI Agent va yorliqlar)
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $marker = Join-Path $env:RUNNER_TEMP "install_ok.txt"
+          Start-Process -FilePath dist\aget_ai.exe -ArgumentList "--install-silent", "--write-marker", $marker -Wait
+          for ($i = 0; $i -lt 30 -and -not (Test-Path $marker); $i++) { Start-Sleep -Seconds 1 }
+          if (-not (Test-Path $marker)) { throw "O'rnatilgan nusxa ishga tushmadi" }
+          $c = Get-Content $marker -Raw
+          Write-Host "Natija: $c"
+          if (-not $c.StartsWith("True")) { throw "Dastur o'zini o'rnatilgan deb bilmadi" }
+          if (-not (Test-Path "C:\AI Agent\aget_ai.exe")) { throw "C:\AI Agent\aget_ai.exe yo'q" }
+          $desk = [Environment]::GetFolderPath('Desktop')
+          if (-not (Test-Path (Join-Path $desk 'AI Agent.lnk'))) { throw "Ish stolida yorliq yo'q" }
+          Write-Host "O'rnatish ishladi"
+
       - uses: actions/upload-artifact@v4
         with:
           name: aget_ai-exe

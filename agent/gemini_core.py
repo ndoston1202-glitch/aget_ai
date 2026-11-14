@@ -34,6 +34,10 @@ def pick_model(client) -> str | None:
     return best
 
 
+def _is_user_text(c) -> bool:
+    return c.role == "user" and any(p.text for p in (c.parts or []))
+
+
 def make_client(timeout_s: int = 120) -> genai.Client:
     """Kutish chegarasi va vaqtinchalik xatolarda qayta urinish bilan Gemini mijozi."""
     return genai.Client(http_options=types.HttpOptions(
@@ -95,6 +99,26 @@ class GeminiAgent:
 
     def reset(self):
         self.contents = []
+
+    MAX_SAVED = 80  # saqlanadigan xabarlar soni (eskilari tashlanadi)
+
+    def export_state(self) -> list:
+        """Suhbatni diskka saqlash uchun JSON ko'rinishiga o'tkazadi."""
+        items = self.contents
+        if len(items) > self.MAX_SAVED:
+            # Faqat foydalanuvchining oddiy matnli xabaridan boshlab kesamiz (vosita juftliklari buzilmasin)
+            start = len(items) - self.MAX_SAVED
+            while start < len(items) and not _is_user_text(items[start]):
+                start += 1
+            items = items[start:]
+        return [c.model_dump(mode="json", exclude_none=True) for c in items]
+
+    def load_state(self, data: list) -> None:
+        try:
+            self.contents = [types.Content.model_validate(d) for d in data]
+        except Exception as e:
+            config.log_error(f"gemini load_state: {e}")
+            self.contents = []
 
     def _config(self) -> types.GenerateContentConfig:
         return types.GenerateContentConfig(
