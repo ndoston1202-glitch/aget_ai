@@ -1,0 +1,195 @@
+"""Agent bajara oladigan amallar (tools).
+
+Xavfli amallar (buyruq ishga tushirish, fayl yozish) foydalanuvchi ruxsatisiz bajarilmaydi.
+"""
+import subprocess
+from pathlib import Path
+
+from . import config, memory, scheduler
+
+
+class Human:
+    """Agent bilan foydalanuvchi o'rtasidagi aloqa (ruxsat so'rash, savol berish)."""
+
+    def approve(self, action: str) -> bool:
+        raise NotImplementedError
+
+    def ask(self, question: str) -> str:
+        raise NotImplementedError
+
+
+class ConsoleHuman(Human):
+    def approve(self, action: str) -> bool:
+        print(f"\n⚠️  Agent ruxsat so'rayapti:\n{action}")
+        ans = input("Ruxsat berasizmi? [h/y] (ha/yo'q): ").strip().lower()
+        return ans in ("h", "ha", "y", "yes", "ok")
+
+    def ask(self, question: str) -> str:
+        print(f"\n❓ Agent savoli: {question}")
+        return input("Javobingiz: ").strip() or "(javob berilmadi)"
+
+
+class AutoHuman(Human):
+    """Takrorlanuvchi vazifalar uchun: foydalanuvchi yonida emas."""
+
+    def __init__(self, allow_actions: bool):
+        self.allow_actions = allow_actions
+
+    def approve(self, action: str) -> bool:
+        return self.allow_actions
+
+    def ask(self, question: str) -> str:
+        return ("Foydalanuvchi hozir yo'q (bu avtomatik vazifa). Xavfsiz yo'lni tanla "
+                "yoki savolni yakuniy hisobotda yoz.")
+
+
+def _resolve(path: str) -> Path:
+    p = Path(path).expanduser()
+    return p if p.is_absolute() else (config.WORKSPACE_DIR / p)
+
+
+def _truncate(text: str, limit: int = 20000) -> str:
+    return text if len(text) <= limit else text[:limit] + f"\n... ({len(text) - limit} belgi qisqartirildi)"
+
+
+# --- Tool sxemalari (Claude'ga yuboriladi) ---
+
+def _schema(props: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
+
+
+TOOL_DEFS = [
+    {
+        "name": "run_shell",
+        "description": "Kompyuterda shell (bash) buyrug'ini bajaradi. Foydalanuvchidan ruxsat so'raladi. "
+                       "Ishchi papka: agent workspace.",
+        "input_schema": _schema({
+            "command": {"type": "string", "description": "Bajariladigan buyruq"},
+            "reason": {"type": "string", "description": "Nega bu buyruq kerakligi (foydalanuvchiga ko'rsatiladi)"},
+        }, ["command", "reason"]),
+    },
+    {
+        "name": "read_file",
+        "description": "Fayl matnini o'qiydi. Nisbiy yo'l workspace papkasiga nisbatan.",
+        "input_schema": _schema({"path": {"type": "string"}}, ["path"]),
+    },
+    {
+        "name": "write_file",
+        "description": "Faylga matn yozadi (mavjud bo'lsa ustidan yozadi). Foydalanuvchidan ruxsat so'raladi.",
+        "input_schema": _schema({
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+        }, ["path", "content"]),
+    },
+    {
+        "name": "list_dir",
+        "description": "Papkadagi fayllar ro'yxati.",
+        "input_schema": _schema({"path": {"type": "string", "description": "Bo'sh bo'lsa workspace"}}, ["path"]),
+    },
+    {
+        "name": "ask_user",
+        "description": "Foydalanuvchiga savol berib, javobini kutadi. Vazifa noaniq bo'lsa yoki "
+                       "muhim qaror kerak bo'lsa ishlat.",
+        "input_schema": _schema({"question": {"type": "string"}}, ["question"]),
+    },
+    {
+        "name": "remember",
+        "description": "Uzoq muddatli xotiraga yozadi. kind='preferences' - foydalanuvchi afzalliklari, "
+                       "kind='lessons' - ish jarayonidan o'rganilgan saboq.",
+        "input_schema": _schema({
+            "kind": {"type": "string", "enum": ["preferences", "lessons"]},
+            "text": {"type": "string"},
+        }, ["kind", "text"]),
+    },
+    {
+        "name": "schedule_task",
+        "description": "Takrorlanuvchi vazifa yaratadi: har every_minutes daqiqada prompt bajariladi. "
+                       "allow_actions=true bo'lsa avtomatik vazifa buyruq/fayl yozishni ruxsatsiz bajara oladi - "
+                       "buni faqat foydalanuvchi aniq rozi bo'lsa qo'y.",
+        "input_schema": _schema({
+            "prompt": {"type": "string", "description": "Har safar bajariladigan vazifa matni"},
+            "every_minutes": {"type": "integer"},
+            "allow_actions": {"type": "boolean"},
+        }, ["prompt", "every_minutes", "allow_actions"]),
+    },
+    {
+        "name": "list_scheduled_tasks",
+        "description": "Barcha takrorlanuvchi vazifalar ro'yxati.",
+        "input_schema": _schema({}, []),
+    },
+    {
+        "name": "cancel_scheduled_task",
+        "description": "Takrorlanuvchi vazifani o'chiradi.",
+        "input_schema": _schema({"task_id": {"type": "string"}}, ["task_id"]),
+    },
+]
+
+# Anthropic serverida ishlaydigan tayyor vositalar (internetdan qidirish va sahifa o'qish)
+SERVER_TOOLS = [
+    {"type": "web_search_20260209", "name": "web_search", "max_uses": 5},
+    {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 5},
+]
+
+
+# --- Tool bajaruvchilar ---
+
+def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
+    """(natija, xatomi) qaytaradi."""
+    try:
+        if name == "run_shell":
+            cmd = args["command"]
+            if not human.approve(f"  Buyruq: {cmd}\n  Sabab:  {args.get('reason', '')}"):
+                return "Foydalanuvchi bu buyruqqa ruxsat bermadi.", True
+            r = subprocess.run(cmd, shell=True, cwd=config.WORKSPACE_DIR, capture_output=True,
+                               text=True, timeout=config.SHELL_TIMEOUT)
+            out = f"exit code: {r.returncode}\n--- stdout ---\n{r.stdout}\n--- stderr ---\n{r.stderr}"
+            return _truncate(out), r.returncode != 0
+
+        if name == "read_file":
+            return _truncate(_resolve(args["path"]).read_text(encoding="utf-8", errors="replace")), False
+
+        if name == "write_file":
+            path = _resolve(args["path"])
+            preview = args["content"][:400] + ("..." if len(args["content"]) > 400 else "")
+            if not human.approve(f"  Faylga yozish: {path}\n  Mazmuni:\n{preview}"):
+                return "Foydalanuvchi faylga yozishga ruxsat bermadi.", True
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(args["content"], encoding="utf-8")
+            return f"Yozildi: {path} ({len(args['content'])} belgi)", False
+
+        if name == "list_dir":
+            path = _resolve(args.get("path") or ".")
+            items = sorted(path.iterdir())
+            return "\n".join(f"{'[D]' if p.is_dir() else '   '} {p.name}" for p in items) or "(bo'sh)", False
+
+        if name == "ask_user":
+            return human.ask(args["question"]), False
+
+        if name == "remember":
+            return memory.add(args["kind"], args["text"]), False
+
+        if name == "schedule_task":
+            if args.get("allow_actions") and not human.approve(
+                    f"  Avtomatik vazifaga ruxsatsiz amal bajarish huquqi berilsinmi?\n  Vazifa: {args['prompt']}"):
+                args["allow_actions"] = False
+            t = scheduler.add_task(args["prompt"], args["every_minutes"], args["allow_actions"])
+            return (f"Vazifa yaratildi: id={t['id']}, har {t['every_minutes']} daqiqada, "
+                    f"amallarga ruxsat={t['allow_actions']}"), False
+
+        if name == "list_scheduled_tasks":
+            tasks = scheduler.list_tasks()
+            if not tasks:
+                return "Takrorlanuvchi vazifalar yo'q.", False
+            return "\n".join(
+                f"{t['id']}: har {t['every_minutes']} daq | {'yoqilgan' if t['enabled'] else 'to`xtatilgan'} | "
+                f"{t['prompt']} | oxirgi natija: {t['last_result']}" for t in tasks), False
+
+        if name == "cancel_scheduled_task":
+            ok = scheduler.remove_task(args["task_id"])
+            return ("O'chirildi." if ok else "Bunday id topilmadi."), not ok
+
+        return f"Noma'lum tool: {name}", True
+    except subprocess.TimeoutExpired:
+        return f"Buyruq {config.SHELL_TIMEOUT} sekunddan ko'p ishladi va to'xtatildi.", True
+    except Exception as e:
+        return f"Xato: {type(e).__name__}: {e}", True
