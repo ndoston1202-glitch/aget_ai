@@ -8,7 +8,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
-from agent import config, memory, scheduler, updater
+from agent import config, memory, scheduler, server, updater
 from agent.tools import AutoHuman, Human
 
 KEY_URLS = {
@@ -114,12 +114,14 @@ class App:
         self.busy = False
         root.title("aget_ai — shaxsiy AI agent")
         self.updating = False
+        self.phone_server = None
         root.geometry("820x600")
 
         menu = tk.Menu(root)
         menu.add_command(label="Yangi suhbat", command=self.new_chat)
         menu.add_command(label="Vazifalar", command=self.show_tasks)
         menu.add_command(label="Xotira", command=self.show_memory)
+        menu.add_command(label="Telefon", command=self.show_phone)
         menu.add_command(label="Sozlamalar", command=self.open_settings)
         menu.add_command(label="Yangilash", command=lambda: self.check_update(manual=True))
         root.config(menu=menu)
@@ -176,6 +178,7 @@ class App:
     def _startup(self):
         scheduler.Scheduler(self.run_scheduled).start()
         self._auto_update_loop()
+        self._start_phone_server()
         if not apply_settings(load_settings()):
             self.write("Xush kelibsiz! Avval API kalitini kiriting (Gemini bepul).", "event")
             if not self.open_settings():
@@ -190,6 +193,48 @@ class App:
         from agent.core import make_agent
         self.agent = make_agent(GuiHuman(self))
         self.root.title(f"aget_ai — shaxsiy AI agent ({config.provider()}) — v{updater.current_version()}")
+
+    # --- telefon ---
+    def _start_phone_server(self):
+        from agent.core import make_agent
+        try:
+            self.phone_server = server.start(make_agent, on_log=lambda m: self.events.put(("task", m)))
+        except OSError as e:
+            self.write(f"Telefon serveri ishga tushmadi: {e}", "error")
+
+    def show_phone(self):
+        win = tk.Toplevel(self.root)
+        win.title("Telefondan ulanish")
+        win.resizable(False, False)
+        frm = ttk.Frame(win, padding=20)
+        frm.pack()
+        if not self.phone_server:
+            ttk.Label(frm, text="Telefon serveri ishlamayapti. Dasturni qayta oching.").pack()
+            return
+        addr = f"{server.lan_ip()}:{server.PORT}"
+        rows = [
+            ("1. Telefonga aget_ai ilovasini (APK) o'rnating.", None),
+            ("2. Telefon shu kompyuter bilan bitta Wi-Fi'ga ulangan bo'lsin.", None),
+            ("3. Ilovaga quyidagilarni kiriting:", None),
+            ("Manzil:", addr),
+            ("Kod:", server.get_token()),
+        ]
+        for text, value in rows:
+            row = ttk.Frame(frm)
+            row.pack(anchor="w", pady=3)
+            ttk.Label(row, text=text, font=("Segoe UI", 11)).pack(side="left")
+            if value:
+                e = ttk.Entry(row, font=("Segoe UI", 16, "bold"), width=len(value) + 2)
+                e.insert(0, value)
+                e.config(state="readonly")
+                e.pack(side="left", padx=8)
+        apk = "https://github.com/ndoston1202-glitch/aget_ai/releases/download/latest/aget_ai.apk"
+        link = ttk.Label(frm, text="APK ni yuklab olish havolasi (bosing)", foreground="blue", cursor="hand2")
+        link.pack(anchor="w", pady=(10, 0))
+        link.bind("<Button-1>", lambda e: webbrowser.open(apk))
+        ttk.Label(frm, text="Brauzerda ham ochiladi: http://" + addr, foreground="#666").pack(anchor="w", pady=(6, 0))
+        ttk.Label(frm, text="Windows \"Брандмауэр\" ruxsat so'rasa — \"Разрешить доступ\" ni bosing.",
+                  foreground="#666").pack(anchor="w")
 
     # --- yangilanish ---
     def _auto_update_loop(self):

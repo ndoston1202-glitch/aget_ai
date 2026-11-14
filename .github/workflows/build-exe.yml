@@ -1,4 +1,4 @@
-name: Windows .exe yasash
+name: Windows .exe va Android .apk yasash
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,13 +45,46 @@ jobs:
           name: aget_ai-exe
           path: dist/aget_ai.exe
 
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: .apk yasash
+        run: gradle -p android assembleDebug -PversionCode=${{ github.run_number }} --no-daemon
+
+      - name: Nomini o'zgartirish
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk aget_ai.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aget_ai-apk
+          path: aget_ai.apk
+
+  release:
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
       - name: "\"latest\" relizga yuklash"
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest dist/aget_ai.exe \
+          gh release create latest aget_ai.exe aget_ai.apk \
             --title "aget_ai (eng so'nggi versiya)" \
-            --notes "Yuklab oling va ikki marta bosing. Windows ogohlantirsa: 'Подробнее / More info' -> 'Выполнить в любом случае / Run anyway'." \
+            --notes "Kompyuter: aget_ai.exe ni yuklab, ikki marta bosing. Windows ogohlantirsa: 'Подробнее' -> 'Выполнить в любом случае'. Telefon: aget_ai.apk ni yuklab o'rnating (noma'lum manbalarga ruxsat bering)." \
             --target "$GITHUB_SHA"
