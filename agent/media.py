@@ -20,8 +20,8 @@ _image_model: str | None = None
 def _client():
     if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
         raise RuntimeError("Bu funksiya uchun Gemini API kaliti kerak (Sozlamalar).")
-    from google import genai
-    return genai.Client()
+    from .gemini_core import make_client
+    return make_client(timeout_s=180)
 
 
 def _pick_image_model(client) -> str:

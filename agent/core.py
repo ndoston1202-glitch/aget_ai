@@ -22,7 +22,7 @@ Foydalanuvchi bilan o'zbek tilida, qisqa va aniq gaplash. Bajarmagan ishingni ba
 
 class Agent:
     def __init__(self, human: Human, client: anthropic.Anthropic | None = None):
-        self.client = client or anthropic.Anthropic()
+        self.client = client or anthropic.Anthropic(timeout=180.0, max_retries=2)
         self.human = human
         self.messages: list = []
 

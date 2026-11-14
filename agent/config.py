@@ -33,3 +33,13 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 for d in (DATA_DIR, WORKSPACE_DIR, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+
+def log_error(msg: str) -> None:
+    """Xatolarni data/logs/agent.log ga yozadi (muammoni aniqlash uchun)."""
+    from datetime import datetime
+    try:
+        with (LOG_DIR / "agent.log").open("a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
+    except OSError:
+        pass

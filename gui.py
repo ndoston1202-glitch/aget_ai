@@ -4,6 +4,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
@@ -143,8 +144,13 @@ class App:
         self.voice_btn.pack(side="left", padx=(8, 0))
         self.send_btn = ttk.Button(bottom, text="Yuborish", command=self.send)
         self.send_btn.pack(side="left", padx=(8, 0))
-        self.status = ttk.Label(root, text="", padding=(8, 0, 8, 6))
-        self.status.pack(fill="x")
+        status_row = ttk.Frame(root, padding=(8, 0, 8, 6))
+        status_row.pack(fill="x")
+        self.status = ttk.Label(status_row, text="")
+        self.status.pack(side="left")
+        self.stop_btn = ttk.Button(status_row, text="⏹ To'xtatish", command=self.cancel)
+        self.run_id = 0
+        self.busy_since = 0.0
 
         root.after(100, self._poll)
         root.after(200, self._startup)
@@ -163,8 +169,10 @@ class App:
                 if kind == "call":
                     data()
                 elif kind == "done":
-                    self.write(f"🤖 {data}", "agent")
-                    self._set_busy(False)
+                    run_id, ans = data
+                    if run_id == self.run_id:  # to'xtatilgan ishning javobi e'tiborga olinmaydi
+                        self.write(f"🤖 {ans}", "agent")
+                        self._set_busy(False)
                 elif kind == "event" and data.startswith("🖼 "):
                     self.show_image(data[2:].strip())
                 else:
@@ -221,10 +229,35 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     def _set_busy(self, busy: bool):
+        was_busy = self.busy
         self.busy = busy
         self.send_btn.config(state="disabled" if busy else "normal")
         self.voice_btn.config(state="disabled" if busy else "normal")
-        self.status.config(text="⏳ Agent ishlayapti..." if busy else "")
+        if busy:
+            self.stop_btn.pack(side="left", padx=(12, 0))
+            if not was_busy:
+                self.busy_since = time.time()
+                self._tick()
+        else:
+            self.stop_btn.pack_forget()
+            self.status.config(text="")
+
+    def _tick(self):
+        """Agent ishlayotganda o'tgan vaqtni ko'rsatadi."""
+        if not self.busy or self.updating:
+            return
+        secs = int(time.time() - self.busy_since)
+        self.status.config(text=f"⏳ Agent ishlayapti... {secs} s")
+        self.root.after(1000, self._tick)
+
+    def cancel(self):
+        """Javob kutishni to'xtatadi va yangi suhbat boshlaydi."""
+        if not self.busy:
+            return
+        self.run_id += 1
+        self._set_busy(False)
+        self._create_agent()
+        self.write("⏹ To'xtatildi. Yangi suhbat boshlandi, topshiriqni qayta yozishingiz mumkin.", "event")
 
     # --- ishga tushish ---
     def _startup(self):
@@ -369,13 +402,19 @@ class App:
         self.entry.delete(0, "end")
         self.write(f"Siz: {text}", "user")
         self._set_busy(True)
+        self.run_id += 1
+        run_id, agent = self.run_id, self.agent
 
         def work():
+            def on_event(m):
+                if run_id == self.run_id:
+                    self.events.put(("event", m))
             try:
-                ans = self.agent.run(text, on_event=lambda m: self.events.put(("event", m)))
+                ans = agent.run(text, on_event=on_event)
             except Exception as e:
-                ans = f"Kutilmagan xato: {e}"
-            self.events.put(("done", ans))
+                config.log_error(f"gui run: {type(e).__name__}: {e}")
+                ans = f"Kutilmagan xato: {type(e).__name__}: {e}"
+            self.events.put(("done", (run_id, ans)))
         threading.Thread(target=work, daemon=True).start()
 
     def run_scheduled(self, task: dict) -> str:

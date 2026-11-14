@@ -33,10 +33,37 @@ def pick_model(client) -> str | None:
     return best
 
 
+def make_client(timeout_s: int = 120) -> genai.Client:
+    """Kutish chegarasi va vaqtinchalik xatolarda qayta urinish bilan Gemini mijozi."""
+    return genai.Client(http_options=types.HttpOptions(
+        timeout=timeout_s * 1000,
+        retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10,
+                                             http_status_codes=[500, 502, 503, 504]),
+    ))
+
+
+def describe_error(e: Exception) -> str:
+    """Xatoni foydalanuvchiga tushunarli qilib aytadi."""
+    if isinstance(e, errors.APIError):
+        if e.code == 429:
+            return ("Bepul tarif limitiga yetildi (juda ko'p so'rov yoki kunlik limit tugadi). "
+                    "Bir daqiqa kutib qayta urinib ko'ring.")
+        if e.code in (400, 401, 403):
+            return f"API kaliti yoki so'rovda muammo ({e.code}): {e.message}"
+        return f"Gemini xatosi ({e.code}): {e.message}"
+    name = type(e).__name__
+    if "Timeout" in name:
+        return ("Google serveri 2 daqiqa ichida javob bermadi. Internetni tekshiring "
+                "(VPN yoqilgan bo'lsa, o'chirib yoki yoqib ko'ring) va qayta urinib ko'ring.")
+    if "Connect" in name or isinstance(e, OSError):
+        return "Google serveriga ulanib bo'lmadi. Internet ulanishini tekshiring."
+    return f"Kutilmagan xato: {name}: {e}"
+
+
 class GeminiAgent:
     def __init__(self, human: Human, client: genai.Client | None = None):
         # Kalit GEMINI_API_KEY (yoki GOOGLE_API_KEY) muhit o'zgaruvchisidan olinadi
-        self.client = client or genai.Client()
+        self.client = client or make_client()
         self.human = human
         self.contents: list[types.Content] = []
         self.model = config.GEMINI_MODEL
@@ -82,17 +109,9 @@ class GeminiAgent:
         for _ in range(config.MAX_STEPS):
             try:
                 resp = self._generate(contents=self.contents, config=self._config())
-            except errors.APIError as e:
-                if e.code == 429:
-                    final = ("Bepul tarif limitiga yetildi (juda ko'p so'rov). "
-                             "Bir daqiqa kutib qayta urinib ko'ring.")
-                elif e.code in (400, 401, 403):
-                    final = f"API kaliti yoki so'rovda muammo ({e.code}): {e.message}"
-                else:
-                    final = f"Gemini xatosi ({e.code}): {e.message}"
-                break
-            except OSError:
-                final = "Internetga ulanib bo'lmadi."
+            except Exception as e:
+                config.log_error(f"gemini model={self.model}: {type(e).__name__}: {e}")
+                final = describe_error(e)
                 break
 
             cand = resp.candidates[0] if resp.candidates else None
