@@ -1,11 +1,9 @@
 """Agentning asosiy sikli: o'ylaydi -> amal bajaradi -> natijani ko'radi -> davom etadi."""
 import json
-from datetime import datetime
-
 import anthropic
 
 from . import config, memory
-from .tools import SERVER_TOOLS, TOOL_DEFS, Human, execute
+from .tools import SERVER_TOOLS, TOOL_DEFS, Human, execute, system_context
 
 SYSTEM_PROMPT = """Sen foydalanuvchining shaxsiy AI agentisan. Sen faqat suhbatlashmaysan - \
 buyruqni tushunib, uni vositalar (tools) yordamida o'zing bajarasan.
@@ -34,10 +32,19 @@ class Agent:
     def _system(self) -> list[dict]:
         return [
             {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": (
-                f"Bugungi sana: {datetime.now():%Y-%m-%d %H:%M}\n"
-                f"Workspace papka: {config.WORKSPACE_DIR}\n\n{memory.as_prompt()}")},
+            {"type": "text", "text": system_context()},
         ]
+
+    def _complete_json(self, prompt: str, schema: dict) -> str:
+        resp = self.client.messages.create(
+            model=config.MODEL,
+            max_tokens=4000,
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if resp.stop_reason != "end_turn":
+            return ""
+        return next(b.text for b in resp.content if b.type == "text")
 
     def _call(self):
         return self.client.beta.messages.create(
@@ -109,7 +116,7 @@ class Agent:
         # O'zini mukammallashtirish: murakkab vazifadan keyin saboq chiqarish
         if learn and used_tools:
             transcript.append(f"YAKUN: {final}")
-            for lesson in memory.reflect(self.client, user_text, "\n".join(transcript)):
+            for lesson in memory.reflect(self._complete_json, user_text, "\n".join(transcript)):
                 on_event(f"🧠 Yangi saboq: {lesson}")
         return final
 
@@ -117,3 +124,11 @@ class Agent:
 def _short(data: dict, limit: int = 120) -> str:
     s = json.dumps(data, ensure_ascii=False)
     return s if len(s) <= limit else s[:limit] + "..."
+
+
+def make_agent(human: Human):
+    """Sozlamaga qarab Claude yoki Gemini agentini yaratadi."""
+    if config.provider() == "gemini":
+        from .gemini_core import GeminiAgent
+        return GeminiAgent(human)
+    return Agent(human)

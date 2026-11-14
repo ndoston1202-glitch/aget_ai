@@ -15,7 +15,18 @@ Claude (Anthropic API) asosida ishlaydi.
 | O'zini mukammallashtirish | Har bir vazifadan keyin o'z ishini tahlil qilib, saboqlarni `data/memory.json` ga yozadi. Keyingi safar ularni hisobga oladi |
 | Xotira | Siz haqingizdagi afzalliklarni eslab qoladi (masalan, "javoblarni qisqa yoz") |
 
-## O'rnatish
+## Eng oson yo'l: .exe (Windows, terminalsiz)
+
+1. Yuklab oling: **https://github.com/ndoston1202-glitch/aget_ai/releases/download/latest/aget_ai.exe**
+2. Faylni ikki marta bosing. Windows ogohlantirsa: **Подробнее (More info) → Выполнить в любом случае (Run anyway)**.
+3. Birinchi ochilishda **Gemini** ni tanlang va API kalitini kiriting
+   (bepul kalit: https://aistudio.google.com/apikey).
+4. Pastdagi maydonga topshiriq yozib, **Yuborish** ni bosing.
+
+Ma'lumotlar (xotira, vazifalar, kalit) `C:\Users\<siz>\aget_ai` papkasida saqlanadi.
+Dastur yopilsa, takrorlanuvchi vazifalar ham to'xtaydi.
+
+## Dasturchilar uchun: Python orqali o'rnatish
 
 ```bash
 git clone https://github.com/ndoston1202-glitch/aget_ai
@@ -25,16 +36,19 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-API kalitini [console.anthropic.com](https://console.anthropic.com) dan oling va o'rnating:
+API kalitini o'rnating. Bepul variant — Gemini ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)):
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."     # Windows: set ANTHROPIC_API_KEY=sk-ant-...
+set GEMINI_API_KEY=kalitingiz            # Linux/Mac: export GEMINI_API_KEY=kalitingiz
 ```
+
+Yoki Claude ([console.anthropic.com](https://console.anthropic.com), pullik): `ANTHROPIC_API_KEY`.
 
 ## Ishga tushirish
 
 ```bash
-python main.py
+python gui.py      # oynali dastur
+python main.py     # terminal versiyasi
 ```
 
 Misollar:
@@ -64,7 +78,9 @@ python main.py --daemon
 
 | O'zgaruvchi | Sukut | Ma'nosi |
 |---|---|---|
-| `AGENT_MODEL` | `claude-opus-5-5` | Ishlatiladigan model |
+| `AGENT_PROVIDER` | kalitga qarab | `gemini` yoki `claude` |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini modeli |
+| `AGENT_MODEL` | `claude-opus-5-5` | Claude modeli |
 | `AGENT_EFFORT` | `high` | O'ylash darajasi: `low`, `medium`, `high`, `xhigh`, `max` |
 | `AGENT_WORKSPACE` | `./workspace` | Agent ishlaydigan papka |
 | `AGENT_DATA_DIR` | `./data` | Xotira, vazifalar va loglar |
@@ -72,7 +88,9 @@ python main.py --daemon
 ## Tuzilma
 
 ```
+gui.py             # oynali dastur (.exe shundan yasaladi)
 main.py            # CLI va fon rejimi
+agent/gemini_core.py # Gemini agent sikli
 agent/core.py      # agent sikli (o'ylash -> amal -> natija)
 agent/tools.py     # vositalar va ruxsat so'rash
 agent/memory.py    # xotira va o'zini tahlil qilish

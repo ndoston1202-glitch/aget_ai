@@ -2,7 +2,11 @@
 
 Xavfli amallar (buyruq ishga tushirish, fayl yozish) foydalanuvchi ruxsatisiz bajarilmaydi.
 """
+import platform
+import re
 import subprocess
+import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from . import config, memory, scheduler
@@ -43,6 +47,14 @@ class AutoHuman(Human):
                 "yoki savolni yakuniy hisobotda yoz.")
 
 
+def system_context() -> str:
+    """Har so'rovda modelga beriladigan joriy holat."""
+    shell = "cmd (Windows)" if platform.system() == "Windows" else "bash"
+    return (f"Bugungi sana: {datetime.now():%Y-%m-%d %H:%M}\n"
+            f"Operatsion tizim: {platform.system()} {platform.release()}, run_shell buyruqlari {shell} da bajariladi\n"
+            f"Workspace papka: {config.WORKSPACE_DIR}\n\n{memory.as_prompt()}")
+
+
 def _resolve(path: str) -> Path:
     p = Path(path).expanduser()
     return p if p.is_absolute() else (config.WORKSPACE_DIR / p)
@@ -61,7 +73,7 @@ def _schema(props: dict, required: list[str]) -> dict:
 TOOL_DEFS = [
     {
         "name": "run_shell",
-        "description": "Kompyuterda shell (bash) buyrug'ini bajaradi. Foydalanuvchidan ruxsat so'raladi. "
+        "description": "Kompyuterda shell buyrug'ini bajaradi (Windows'da cmd, Linux/Mac'da bash). Foydalanuvchidan ruxsat so'raladi. "
                        "Ishchi papka: agent workspace.",
         "input_schema": _schema({
             "command": {"type": "string", "description": "Bajariladigan buyruq"},
@@ -124,6 +136,13 @@ TOOL_DEFS = [
     },
 ]
 
+# Gemini uchun: internetdagi sahifani o'qish (Claude'da buning o'rniga server vositasi bor)
+FETCH_URL_DEF = {
+    "name": "fetch_url",
+    "description": "Internetdagi sahifani (URL) yuklab, matnini qaytaradi.",
+    "input_schema": _schema({"url": {"type": "string"}}, ["url"]),
+}
+
 # Anthropic serverida ishlaydigan tayyor vositalar (internetdan qidirish va sahifa o'qish)
 SERVER_TOOLS = [
     {"type": "web_search_20260209", "name": "web_search", "max_uses": 5},
@@ -141,7 +160,7 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
             if not human.approve(f"  Buyruq: {cmd}\n  Sabab:  {args.get('reason', '')}"):
                 return "Foydalanuvchi bu buyruqqa ruxsat bermadi.", True
             r = subprocess.run(cmd, shell=True, cwd=config.WORKSPACE_DIR, capture_output=True,
-                               text=True, timeout=config.SHELL_TIMEOUT)
+                               text=True, errors="replace", timeout=config.SHELL_TIMEOUT)
             out = f"exit code: {r.returncode}\n--- stdout ---\n{r.stdout}\n--- stderr ---\n{r.stderr}"
             return _truncate(out), r.returncode != 0
 
@@ -161,6 +180,14 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
             path = _resolve(args.get("path") or ".")
             items = sorted(path.iterdir())
             return "\n".join(f"{'[D]' if p.is_dir() else '   '} {p.name}" for p in items) or "(bo'sh)", False
+
+        if name == "fetch_url":
+            req = urllib.request.Request(args["url"], headers={"User-Agent": "Mozilla/5.0 aget_ai"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = r.read(2_000_000).decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+            raw = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
+            text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).strip()
+            return _truncate(text, 15000), False
 
         if name == "ask_user":
             return human.ask(args["question"]), False

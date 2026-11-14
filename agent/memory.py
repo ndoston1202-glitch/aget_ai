@@ -75,28 +75,26 @@ REFLECT_SCHEMA = {
 }
 
 
-def reflect(client, task: str, transcript: str) -> list[str]:
-    """Vazifadan keyin o'z ishini tahlil qilib, yangi saboqlarni saqlaydi."""
+def reflect(complete_json, task: str, transcript: str) -> list[str]:
+    """Vazifadan keyin o'z ishini tahlil qilib, yangi saboqlarni saqlaydi.
+
+    complete_json(prompt, schema) -> str : modelga so'rov yuborib JSON matn qaytaruvchi funksiya.
+    """
     prompt = (
         "Sen o'z ishini tahlil qilayotgan AI agentsan. Quyida bajarilgan vazifa va uning "
         "jarayoni berilgan. Kelajakda foydali bo'ladigan QISQA, ANIQ saboqlarni chiqar: "
         "qaysi yondashuv ishladi, qaysi xato bo'ldi va undan qanday qochish kerak. "
         "Foydalanuvchi o'zi haqida yoki ish uslubi haqida aytgan afzalliklarni alohida yoz. "
         "Agar haqiqatan yangi va foydali narsa bo'lmasa, bo'sh ro'yxat qaytar. "
-        "Har biri 1 jumla, o'zbek tilida.\n\n"
+        "Har biri 1 jumla, o'zbek tilida. Javob faqat JSON: "
+        '{"lessons": [...], "preferences": [...]}\n\n'
         f"Mavjud xotira:\n{as_prompt()}\n\n"
         f"Vazifa: {task}\n\nJarayon:\n{transcript[-12000:]}"
     )
     try:
-        resp = client.messages.create(
-            model=config.MODEL,
-            max_tokens=4000,
-            output_config={"effort": "low", "format": {"type": "json_schema", "schema": REFLECT_SCHEMA}},
-            messages=[{"role": "user", "content": prompt}],
-        )
-        if resp.stop_reason != "end_turn":
+        text = complete_json(prompt, REFLECT_SCHEMA)
+        if not text:
             return []
-        text = next(b.text for b in resp.content if b.type == "text")
         data = json.loads(text)
     except Exception as e:  # tahlil muvaffaqiyatsiz bo'lsa ham asosiy ish buzilmasin
         return [f"(tahlil bajarilmadi: {e})"]

@@ -1,0 +1,53 @@
+name: Windows .exe yasash
+
+on:
+  push:
+    branches: [main, claude/ai-agent]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Kutubxonalarni o'rnatish
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: .exe yasash
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name aget_ai
+          --collect-submodules agent
+          --collect-submodules google.genai
+          gui.py
+
+      - name: .exe ishga tushishini tekshirish
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\aget_ai.exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "selftest xato: $($p.ExitCode)" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aget_ai-exe
+          path: dist/aget_ai.exe
+
+      - name: "\"latest\" relizga yuklash"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/aget_ai.exe \
+            --title "aget_ai (eng so'nggi versiya)" \
+            --notes "Yuklab oling va ikki marta bosing. Windows ogohlantirsa: 'Подробнее / More info' -> 'Выполнить в любом случае / Run anyway'." \
+            --target "$GITHUB_SHA"

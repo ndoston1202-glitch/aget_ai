@@ -4,3 +4,6 @@ __pycache__/
 .env
 data/
 workspace/
+build/
+dist/
+*.spec

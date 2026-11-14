@@ -7,8 +7,8 @@ import sys
 import threading
 import time
 
-from agent import memory, scheduler
-from agent.core import Agent
+from agent import config, memory, scheduler
+from agent.core import make_agent
 from agent.tools import AutoHuman, ConsoleHuman
 
 HELP = """Buyruqlar:
@@ -29,7 +29,7 @@ def log(msg: str):
 
 
 def run_scheduled(task: dict) -> str:
-    agent = Agent(AutoHuman(task["allow_actions"]))
+    agent = make_agent(AutoHuman(task["allow_actions"]))
     log(f"\n⏰ Avtomatik vazifa [{task['id']}]: {task['prompt']}")
     result = agent.run(
         f"(Bu avtomatik takrorlanuvchi vazifa, foydalanuvchi hozir yonida emas.)\n{task['prompt']}",
@@ -42,8 +42,8 @@ def run_scheduled(task: dict) -> str:
 def interactive():
     sched = scheduler.Scheduler(run_scheduled)
     sched.start()
-    agent = Agent(ConsoleHuman())
-    print("🤖 AI agent tayyor. Topshiriq yozing (/help - yordam).")
+    agent = make_agent(ConsoleHuman())
+    print(f"🤖 AI agent tayyor ({config.provider()}). Topshiriq yozing (/help - yordam).")
 
     while True:
         try:
