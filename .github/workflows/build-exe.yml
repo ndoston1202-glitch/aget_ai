@@ -60,6 +60,22 @@ jobs:
           if (-not (Test-Path $marker)) { throw "Qayta ishga tushgan nusxa ishlamadi" }
           Write-Host "Qayta ishga tushish ishladi"
 
+      - name: Yangilanishni o'rnatish sinovi (eski fayl o'rniga yangisi)
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          $dir = "C:\Upd Test"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item dist\aget_ai.exe "$dir\aget_ai.exe"
+          Copy-Item dist\aget_ai.exe "$dir\aget_ai_new.exe"
+          $marker = Join-Path $env:RUNNER_TEMP "update_ok.txt"
+          Start-Process -FilePath "$dir\aget_ai.exe" -ArgumentList "--apply-update-test", "`"$dir\aget_ai_new.exe`"", "`"$marker`""
+          for ($i = 0; $i -lt 90 -and -not (Test-Path $marker); $i++) { Start-Sleep -Seconds 1 }
+          if (-not (Test-Path $marker)) { throw "Yangilangan dastur ishga tushmadi" }
+          if (-not (Test-Path "$dir\aget_ai.exe")) { throw "aget_ai.exe yo'qolib qoldi" }
+          if (Test-Path "$dir\aget_ai_new.exe") { throw "aget_ai_new.exe almashtirilmadi" }
+          Write-Host "Yangilanish to'g'ri o'rnatildi"
+
       - name: O'rnatish sinovi (C:\AI Agent va yorliqlar)
         timeout-minutes: 3
         shell: pwsh

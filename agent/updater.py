@@ -58,20 +58,35 @@ def download(info: dict, on_progress=lambda pct: None) -> Path:
     return new
 
 
-def install_and_restart(new: Path) -> None:
-    """Dastur yopilgach eski .exe ni yangisiga almashtirib, qayta ishga tushiradi."""
+def install_and_restart(new: Path, restart_args: list[str] | None = None) -> None:
+    """Dastur yopilgach eski .exe ni yangisiga almashtirib, qayta ishga tushiradi.
+
+    Eski fayl oldindan o'chirilmaydi: yangisi uning ustiga ko'chiriladi. Fayl band bo'lsa
+    (dastur hali yopilmagan yoki antivirus tekshiryapti) 2 daqiqagacha qayta urinadi; baribir
+    bo'lmasa, yangi nusxani o'z joyidan ishga tushiradi - dastur hech qachon yo'qolib qolmaydi.
+    """
     old = Path(sys.executable)
+    args = " ".join(f'"{a}"' for a in (restart_args or []))
+    log = config.LOG_DIR / "update.log"
     bat = Path(tempfile.gettempdir()) / "aget_ai_update.bat"
     bat.write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
-        ":wait\r\n"
-        "ping -n 2 127.0.0.1 >nul\r\n"
-        f'del "{old}" 2>nul\r\n'
-        f'if exist "{old}" goto wait\r\n'
-        f'move /y "{new}" "{old}" >nul\r\n'
         "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
-        f'start "" "{old}"\r\n'
+        "set n=0\r\n"
+        ":wait\r\n"
+        "ping -n 3 127.0.0.1 >nul\r\n"
+        f'move /y "{new}" "{old}" >nul 2>&1\r\n'
+        f'if not exist "{new}" goto ok\r\n'
+        "set /a n+=1\r\n"
+        "if %n% lss 60 goto wait\r\n"
+        f'echo %date% %time% move failed, starting new copy >> "{log}"\r\n'
+        f'start "" "{new}" {args}\r\n'
+        "goto end\r\n"
+        ":ok\r\n"
+        f'echo %date% %time% updated after %n% retries >> "{log}"\r\n'
+        f'start "" "{old}" {args}\r\n'
+        ":end\r\n"
         'del "%~f0"\r\n',
         encoding="utf-8",
     )

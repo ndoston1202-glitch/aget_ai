@@ -912,6 +912,10 @@ if __name__ == "__main__":
         from agent import installer
         installer.install(sys.argv[sys.argv.index("--install-silent") + 1:])
         sys.exit(0)
+    if "--apply-update-test" in sys.argv:  # CI: yangilanishni o'rnatish sinovi
+        i = sys.argv.index("--apply-update-test")
+        from pathlib import Path
+        updater.install_and_restart(Path(sys.argv[i + 1]), ["--write-marker", sys.argv[i + 2]])
     if "--tts-test" in sys.argv:  # CI: Windows ovozi ishlashini tekshirish
         import shutil
         from agent import voice
