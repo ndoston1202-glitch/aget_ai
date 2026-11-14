@@ -22,7 +22,7 @@ def provider() -> str:
 
 
 MODEL = os.environ.get("AGENT_MODEL", "claude-opus-5-5")  # Claude uchun
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # Gemini uchun
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")  # Gemini uchun
 EFFORT = os.environ.get("AGENT_EFFORT", "high")  # low | medium | high | xhigh | max
 MAX_TOKENS = 16000
 MAX_STEPS = 30  # bitta vazifada eng ko'p nechta qadam

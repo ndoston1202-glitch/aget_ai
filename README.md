@@ -79,7 +79,7 @@ python main.py --daemon
 | O'zgaruvchi | Sukut | Ma'nosi |
 |---|---|---|
 | `AGENT_PROVIDER` | kalitga qarab | `gemini` yoki `claude` |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini modeli |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini modeli |
 | `AGENT_MODEL` | `claude-opus-5-5` | Claude modeli |
 | `AGENT_EFFORT` | `high` | O'ylash darajasi: `low`, `medium`, `high`, `xhigh`, `max` |
 | `AGENT_WORKSPACE` | `./workspace` | Agent ishlaydigan papka |

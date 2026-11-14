@@ -2,7 +2,7 @@
 
 Claude agenti (core.Agent) bilan bir xil ishlaydi: o'ylaydi -> amal bajaradi -> natijani ko'radi.
 """
-import json
+import re
 
 from google import genai
 from google.genai import errors, types
@@ -19,12 +19,40 @@ _TOOLS = [types.Tool(function_declarations=[
 ])]
 
 
+def pick_model(client) -> str | None:
+    """Kalit uchun mavjud eng yangi 'gemini-X-flash' modelini topadi."""
+    best, best_ver = None, -1.0
+    for m in client.models.list():
+        name = (m.name or "").removeprefix("models/")
+        match = re.fullmatch(r"gemini-(\d+(?:\.\d+)?)-flash", name)
+        actions = m.supported_actions or []
+        if match and (not actions or "generateContent" in actions):
+            ver = float(match.group(1))
+            if ver > best_ver:
+                best, best_ver = name, ver
+    return best
+
+
 class GeminiAgent:
     def __init__(self, human: Human, client: genai.Client | None = None):
         # Kalit GEMINI_API_KEY (yoki GOOGLE_API_KEY) muhit o'zgaruvchisidan olinadi
         self.client = client or genai.Client()
         self.human = human
         self.contents: list[types.Content] = []
+        self.model = config.GEMINI_MODEL
+
+    def _generate(self, **kw):
+        """So'rov yuboradi; model eskirgan bo'lsa (404), mavjud eng yangisiga o'tib qayta urinadi."""
+        try:
+            return self.client.models.generate_content(model=self.model, **kw)
+        except errors.APIError as e:
+            if e.code != 404:
+                raise
+            new = pick_model(self.client)
+            if not new or new == self.model:
+                raise
+            self.model = new
+            return self.client.models.generate_content(model=self.model, **kw)
 
     def reset(self):
         self.contents = []
@@ -38,8 +66,7 @@ class GeminiAgent:
         )
 
     def _complete_json(self, prompt: str, schema: dict) -> str:
-        resp = self.client.models.generate_content(
-            model=config.GEMINI_MODEL,
+        resp = self._generate(
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json",
                                                response_json_schema=schema),
@@ -54,8 +81,7 @@ class GeminiAgent:
 
         for _ in range(config.MAX_STEPS):
             try:
-                resp = self.client.models.generate_content(
-                    model=config.GEMINI_MODEL, contents=self.contents, config=self._config())
+                resp = self._generate(contents=self.contents, config=self._config())
             except errors.APIError as e:
                 if e.code == 429:
                     final = ("Bepul tarif limitiga yetildi (juda ko'p so'rov). "
