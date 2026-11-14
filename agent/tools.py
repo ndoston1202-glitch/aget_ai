@@ -157,6 +157,23 @@ TOOL_DEFS = [
         }, ["name", "folder", "description", "private"]),
     },
     {
+        "name": "play_youtube",
+        "description": "YouTube'dan qo'shiq yoki videoni qidirib, birinchi natijani brauzerda ochadi (ijro boshlanadi).",
+        "input_schema": _schema({"query": {"type": "string", "description": "Masalan: 'Shahzoda yangi qo'shiq'"}},
+                                ["query"]),
+    },
+    {
+        "name": "open_url",
+        "description": "Sayt yoki havolani foydalanuvchining brauzerida ochadi.",
+        "input_schema": _schema({"url": {"type": "string"}}, ["url"]),
+    },
+    {
+        "name": "speak_text",
+        "description": "Berilgan matnni ovoz chiqarib o'qib beradi. Foydalanuvchi biror matnni (masalan tarjimani) "
+                       "o'qib berishni so'raganda ishlat.",
+        "input_schema": _schema({"text": {"type": "string"}}, ["text"]),
+    },
+    {
         "name": "list_scheduled_tasks",
         "description": "Barcha takrorlanuvchi vazifalar ro'yxati.",
         "input_schema": _schema({}, []),
@@ -241,6 +258,40 @@ def execute(name: str, args: dict, human: Human) -> tuple[str, bool]:
                 return "Foydalanuvchi GitHub'ga yuklashga ruxsat bermadi.", True
             return create_repo(args["name"], args["folder"], args.get("description", ""),
                                args.get("private", True)), False
+
+        if name == "play_youtube":
+            import urllib.parse
+            import webbrowser
+            q = urllib.parse.quote_plus(args["query"])
+            url = f"https://www.youtube.com/results?search_query={q}"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "uz,ru,en"})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    html = r.read(3_000_000).decode("utf-8", errors="replace")
+                vid = re.search(r'"videoId":"([\w-]{11})"', html)
+                title = re.search(r'"title":\{"runs":\[\{"text":"([^"]{1,150})"', html)
+                if vid:
+                    url = f"https://www.youtube.com/watch?v={vid.group(1)}"
+                    webbrowser.open(url)
+                    return f"Ochildi: {title.group(1) if title else args['query']} ({url})", False
+            except Exception:
+                pass
+            webbrowser.open(url)
+            return f"YouTube qidiruv natijalari ochildi: {url}", False
+
+        if name == "open_url":
+            import webbrowser
+            url = args["url"].strip()
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            webbrowser.open(url)
+            return f"Brauzerda ochildi: {url}", False
+
+        if name == "speak_text":
+            from . import voice
+            voice.spoke_during_run = True
+            voice.speak_async(args["text"])
+            return "Matn ovoz chiqarib o'qilmoqda.", False
 
         if name == "ask_user":
             return human.ask(args["question"]), False

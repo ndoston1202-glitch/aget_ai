@@ -38,7 +38,7 @@ def _is_user_text(c) -> bool:
     return c.role == "user" and any(p.text for p in (c.parts or []))
 
 
-def make_client(timeout_s: int = 90) -> genai.Client:
+def make_client(timeout_s: int = 60) -> genai.Client:
     """Kutish chegarasi bor Gemini mijozi (qayta urinishsiz - aks holda kutish uch barobar cho'ziladi)."""
     return genai.Client(http_options=types.HttpOptions(timeout=timeout_s * 1000))
 
@@ -106,31 +106,56 @@ class GeminiAgent:
         self.human = human
         self.contents: list[types.Content] = []
         self.model = config.GEMINI_MODEL
+        self._alts: list[str] | None = None
+        self.on_switch = lambda model: None  # oyna yangi modelni eslab qolishi uchun
         self._thinking = types.ThinkingConfig(thinking_level=config.GEMINI_THINKING)
 
     def _generate(self, **kw):
-        """So'rov yuboradi; model eskirgan bo'lsa (404), mavjud eng yangisiga o'tib qayta urinadi."""
-        t = time.time()
-        config.log_error(f"start model={self.model}")
-        try:
-            resp = self.client.models.generate_content(model=self.model, **kw)
-            config.log_error(f"ok model={self.model} {time.time() - t:.1f}s")
-            return resp
-        except errors.APIError as e:
-            # Model "o'ylash" sozlamasini qo'llamasa - sozlamasiz qayta urinamiz
-            if e.code == 400 and "thinking" in str(e.message).lower() and self._thinking is not None:
-                self._thinking = None
-                cfg = kw.get("config")
-                if cfg is not None:
-                    cfg.thinking_config = None
-                return self.client.models.generate_content(model=self.model, **kw)
-            if e.code != 404:
-                raise
-            new = pick_model(self.client)
-            if not new or new == self.model:
-                raise
-            self.model = new
-            return self.client.models.generate_content(model=self.model, **kw)
+        """So'rov yuboradi. Model ishlamasa (eskirgan, band, javob bermadi) boshqasiga o'tib qayta urinadi."""
+        tried = set()
+        while True:
+            t = time.time()
+            config.log_error(f"start model={self.model}")
+            try:
+                resp = self.client.models.generate_content(model=self.model, **kw)
+                config.log_error(f"ok model={self.model} {time.time() - t:.1f}s")
+                return resp
+            except Exception as e:
+                code = getattr(e, "code", None)
+                config.log_error(f"fail model={self.model} {time.time() - t:.1f}s: {type(e).__name__}: {e}")
+                # Model "o'ylash" sozlamasini qo'llamasa - sozlamasiz qayta urinamiz
+                if code == 400 and "thinking" in str(getattr(e, "message", "")).lower() and self._thinking:
+                    self._thinking = None
+                    if kw.get("config") is not None:
+                        kw["config"].thinking_config = None
+                    continue
+                retryable = code in (404, 500, 502, 503, 504) or "Timeout" in type(e).__name__
+                tried.add(self.model)
+                if not retryable or len(tried) >= 3:
+                    raise
+                new = next((m for m in self._alternatives() if m not in tried), None)
+                if not new:
+                    raise
+                config.log_error(f"switch model {self.model} -> {new}")
+                self.model = new
+                self.on_switch(new)
+
+    def _alternatives(self) -> list[str]:
+        """Zaxira modellar: kalit uchun ochiq Flash modellar, yangisidan eskisiga."""
+        if self._alts is None:
+            try:
+                names = [(m.name or "").removeprefix("models/") for m in self.client.models.list()]
+            except Exception:
+                names = []
+
+            def ver(n):
+                m = re.match(r"gemini-(\d+(?:\.\d+)?)", n)
+                return float(m.group(1)) if m else 0.0
+            flash = [n for n in names if re.fullmatch(r"gemini-[\d.]+-flash(-lite)?", n)]
+            flash.sort(key=lambda n: (-ver(n), "lite" in n))
+            extra = [n for n in ("gemini-flash-latest", "gemini-flash-lite-latest") if n in names]
+            self._alts = flash + extra
+        return self._alts
 
     def reset(self):
         self.contents = []

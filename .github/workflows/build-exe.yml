@@ -32,6 +32,7 @@ jobs:
           pyinstaller --noconfirm --onefile --windowed --name aget_ai
           --collect-submodules agent
           --collect-submodules google.genai
+          --collect-data customtkinter
           gui.py
 
       - name: .exe ishga tushishini tekshirish
@@ -39,6 +40,15 @@ jobs:
         run: |
           $p = Start-Process -FilePath dist\aget_ai.exe -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "selftest xato: $($p.ExitCode)" }
+
+      - name: Ovoz (o'qib berish) sinovi
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $wav = Join-Path $env:RUNNER_TEMP "tts.wav"
+          Start-Process -FilePath dist\aget_ai.exe -ArgumentList "--tts-test", $wav -Wait
+          if (-not (Test-Path $wav) -or (Get-Item $wav).Length -lt 10000) { throw "Ovoz fayli yaratilmadi" }
+          Write-Host "Ovoz fayli: $((Get-Item $wav).Length) bayt"
 
       - name: O'zini qayta ishga tushirish sinovi (yangilanishdagidek)
         timeout-minutes: 3
