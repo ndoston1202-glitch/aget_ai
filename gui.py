@@ -481,6 +481,12 @@ def selftest() -> int:
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(selftest())
+    if "--spawn-test" in sys.argv:  # CI: qayta ishga tushish sinovi
+        updater.spawn_self_test(sys.argv[sys.argv.index("--spawn-test") + 1])
+    if "--write-marker" in sys.argv:
+        with open(sys.argv[sys.argv.index("--write-marker") + 1], "w") as f:
+            f.write("ok")
+        sys.exit(0)
     root = tk.Tk()
     App(root)
     root.mainloop()

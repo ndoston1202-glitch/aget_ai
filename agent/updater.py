@@ -70,10 +70,30 @@ def install_and_restart(new: Path) -> None:
         f'del "{old}" 2>nul\r\n'
         f'if exist "{old}" goto wait\r\n'
         f'move /y "{new}" "{old}" >nul\r\n'
+        "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
         f'start "" "{old}"\r\n'
         'del "%~f0"\r\n',
         encoding="utf-8",
     )
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True)
+    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True, env=clean_env())
+    os._exit(0)
+
+
+def clean_env() -> dict:
+    """Yangi nusxa eski nusxaning vaqtinchalik papkasini (_MEI...) "meros" olmasligi uchun.
+
+    Aks holda qayta ishga tushganda "Failed to load Python DLL" xatosi chiqadi.
+    """
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("_PYI") or k.startswith("_MEIPASS"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def spawn_self_test(marker: str) -> None:
+    """CI sinovi: o'zini yangilanishdagidek qayta ishga tushiradi va darhol chiqadi."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(["cmd", "/c", "start", "", sys.executable, "--write-marker", marker],
+                     creationflags=flags, close_fds=True, env=clean_env())
     os._exit(0)
